@@ -56,7 +56,7 @@ import {
   setAgentAvatarSchema,
   createAgentSchema,
   createAgentHireSchema,
-  updateAgentSchema,
+  updateAgentBodySchema,
   updatePrimaryAgentSchema,
   updateAgentPermissionsSchema,
   updateAgentPermissionGrantSchema,
@@ -3889,7 +3889,7 @@ registry.registerPath({
   summary: "Update an agent",
   request: {
     params: z.object({ id: z.string() }),
-    body: jsonBody(updateAgentSchema.omit({ permissions: true, spentMonthlyCents: true })),
+    body: jsonBody(updateAgentBodySchema.omit({ permissions: true, spentMonthlyCents: true })),
   },
   responses: {
     200: r.ok(),
