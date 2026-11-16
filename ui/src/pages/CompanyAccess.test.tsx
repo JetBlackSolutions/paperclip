@@ -317,6 +317,11 @@ describe("CompanyAccess", () => {
     expect(updateMemberMock).toHaveBeenCalledWith("company-1", "member-1", {
       membershipRole: "owner",
       status: "active",
+      staffProfile: {
+        jobTitle: null,
+        orgRole: null,
+        reportsTo: null,
+      },
     });
 
     await act(async () => {

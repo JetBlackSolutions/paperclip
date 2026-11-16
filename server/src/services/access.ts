@@ -1222,7 +1222,7 @@ export function accessService(db: Db) {
         .where(eq(companyMemberships.id, existing.id))
         .returning()
         .then((rows) => rows[0] ?? existing);
-      await options?.afterUpdate?.(tx as Db, updated);
+      await options?.afterUpdate?.(tx as unknown as Db, updated);
       return updated;
     });
   }
