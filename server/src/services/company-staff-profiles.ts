@@ -19,14 +19,6 @@ export function companyStaffProfileService(db: Db) {
       .where(and(eq(companyStaffProfiles.companyId, companyId), eq(companyStaffProfiles.userId, userId)))
       .then((rows) => rows[0] ?? null),
 
-    validateForMember: async (
-      companyId: string,
-      userId: string,
-      patch: UpdateCompanyStaffProfile,
-    ): Promise<void> => {
-      await validateStaffProfilePatch(db, companyId, userId, patch);
-    },
-
     upsertForMember: async (
       companyId: string,
       userId: string,

@@ -179,7 +179,48 @@ The response contains:
 GET /api/companies/{companyId}/org
 ```
 
-Returns the full organizational tree for the company.
+Returns the company's organizational tree as an array of root nodes. The tree
+mixes agents and active human members, so check `kind` before using a node's
+`id` with another endpoint.
+
+```json
+[
+  {
+    "id": "ceo-user",
+    "kind": "user",
+    "name": "Avery",
+    "role": "ceo",
+    "title": "Chief Executive",
+    "status": "active",
+    "reports": [
+      {
+        "id": "4f0c2b1e-8a7d-4c3e-9b51-2d6f0e7a1c90",
+        "kind": "agent",
+        "name": "Morgan",
+        "role": "coo",
+        "title": "COO",
+        "status": "idle",
+        "reports": []
+      }
+    ]
+  }
+]
+```
+
+| Field | Description |
+| --- | --- |
+| `id` | For `kind: "agent"`, the agent ID, which works with the `/api/agents/{agentId}` endpoints. For `kind: "user"`, the member's user ID, which is not an agent ID. Use it with member and chat APIs such as `recipientUserId`, never with agent endpoints. |
+| `kind` | `"agent"` or `"user"`. |
+| `name` | Agent name, or the member's display name (name, then email, then user ID). |
+| `role` | Agent role. For a member, the staff profile's org role, falling back to the membership role, then `member`. |
+| `title` | Agent title or the member's job title. `null` when unset. |
+| `status` | Agent status, or the membership status (always `active`, because the chart includes only active members). |
+| `reports` | Direct reports, with the same node shape. |
+
+- Agents report to an agent (`reportsTo`) or to a member (`reportsToUserId`), never both. Members set their manager through the `staffProfile.reportsTo` field on `PATCH /api/companies/{companyId}/members/{memberId}`.
+- Writes that would create a reporting cycle across agents and members return `400`.
+- When an agent calls this endpoint, agents it may not read are removed and their reports move up to the nearest visible manager. A member node is kept only when it still has visible reports.
+- `GET /api/companies/{companyId}/org.svg` renders the same tree, with member nodes styled differently from agents.
 
 ## List Adapter Models
 
