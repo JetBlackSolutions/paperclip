@@ -778,6 +778,26 @@ const jsonBody = (schema: z.ZodTypeAny) => ({
   required: true as const,
 });
 
+// The agent validators reject a body that names both an agent manager and a
+// human manager. zodToOpenApiSchema drops refinements, so publish that rule as
+// a `not` clause. A null value fails `type: "string"`, so clearing one manager
+// while setting the other stays valid.
+const agentReportsToBody = (schema: z.ZodTypeAny) => ({
+  content: {
+    "application/json": {
+      schema: {
+        ...zodToOpenApiSchema(schema),
+        not: {
+          type: "object",
+          required: ["reportsTo", "reportsToUserId"],
+          properties: { reportsTo: { type: "string" }, reportsToUserId: { type: "string" } },
+        },
+      },
+    },
+  },
+  required: true as const,
+});
+
 // The company import + preview routes accept the inline JSON body or the raw
 // company package as a compressed zip upload. Document both content types: the
 // JSON variant keeps its zod schema; the multipart variant carries the zip in a
@@ -3623,7 +3643,7 @@ registry.registerPath({
   summary: "Create an agent",
   request: {
     params: z.object({ companyId: z.string() }),
-    body: jsonBody(createAgentSchema),
+    body: agentReportsToBody(createAgentSchema),
   },
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized },
 });
@@ -3635,7 +3655,7 @@ registry.registerPath({
   summary: "Hire an agent",
   request: {
     params: z.object({ companyId: z.string() }),
-    body: jsonBody(createAgentHireSchema),
+    body: agentReportsToBody(createAgentHireSchema),
   },
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized },
 });
@@ -3889,7 +3909,7 @@ registry.registerPath({
   summary: "Update an agent",
   request: {
     params: z.object({ id: z.string() }),
-    body: jsonBody(updateAgentBodySchema.omit({ permissions: true, spentMonthlyCents: true })),
+    body: agentReportsToBody(updateAgentBodySchema.omit({ permissions: true, spentMonthlyCents: true })),
   },
   responses: {
     200: r.ok(),

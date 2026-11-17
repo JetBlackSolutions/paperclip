@@ -582,6 +582,23 @@ describe("openapi routes", () => {
     expect(properties).toHaveProperty("name");
     expect(properties).toHaveProperty("budgetMonthlyCents");
   });
+  it("documents that an agent body cannot name both an agent and a human manager", () => {
+    const document = buildOpenApiSpec() as any;
+    const bodies = [
+      document.paths["/api/companies/{companyId}/agents"].post,
+      document.paths["/api/companies/{companyId}/agent-hires"].post,
+      document.paths["/api/agents/{id}"].patch,
+    ].map(operation => operation.requestBody.content["application/json"].schema);
+    for (const body of bodies) {
+      expect(body.properties).toHaveProperty("reportsTo");
+      expect(body.properties).toHaveProperty("reportsToUserId");
+      expect(body.not).toEqual({
+        type: "object",
+        required: ["reportsTo", "reportsToUserId"],
+        properties: { reportsTo: { type: "string" }, reportsToUserId: { type: "string" } },
+      });
+    }
+  });
 
   it("documents public Dot pairing capabilities while ordinary consent keeps board authentication", () => {
     const spec = buildOpenApiSpec() as any;
