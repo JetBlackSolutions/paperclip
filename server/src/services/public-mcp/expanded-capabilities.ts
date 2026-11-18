@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { mcpAgentModelConfig } from "./agent-config.js";
 import {
-  updateIssueSchema, upsertIssueDocumentSchema, updateAgentSchema, upsertAgentInstructionsFileSchema,
+  updateIssueSchema, upsertIssueDocumentSchema, updateAgentBodySchema, upsertAgentInstructionsFileSchema,
   aiRuntimeConnectionBindingSchema, createProjectSchema, updateProjectSchema,
   companySkillCreateSchema, companySkillUpdateSchema, companySkillFileUpdateSchema,
   createIssueWorkProductSchema, updateIssueWorkProductSchema,
@@ -17,7 +17,7 @@ const taskChanges = updateIssueSchema.pick({ title: true, description: true, ass
   title: z.string().trim().min(1).max(240).optional(), description: z.string().max(524288).nullable().optional(),
   assigneeAgentId: z.uuid().nullable().optional(), blockedByIssueIds: z.array(z.uuid()).max(100).optional(),
 }).strict();
-const agentChanges = updateAgentSchema.pick({ name: true, role: true, title: true, icon: true, reportsTo: true, capabilities: true, desiredSkills: true, budgetMonthlyCents: true }).extend({
+const agentChanges = updateAgentBodySchema.pick({ name: true, role: true, title: true, icon: true, reportsTo: true, capabilities: true, desiredSkills: true, budgetMonthlyCents: true }).extend({
   adapterConfig: z.object({ model: z.string().trim().min(1).max(256).optional(), reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).optional() }).strict().optional(),
   runtimeConfig: z.object({ aiConnection: aiRuntimeConnectionBindingSchema }).strict().optional(),
 }).strict();

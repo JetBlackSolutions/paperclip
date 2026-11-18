@@ -4496,14 +4496,14 @@ export function accessRoutes(
       await assertCanManageCompanyMember(req, access, companyId, memberToUpdate);
 
       const staffProfile = req.body.staffProfile;
-      if (staffProfile && memberToUpdate.principalType === "user") {
-        await companyStaffProfileService(db).validateForMember(companyId, memberToUpdate.principalId, staffProfile);
-      }
-      const updated = await access.updateMember(companyId, memberId, req.body);
+      const updated = await access.updateMember(companyId, memberId, req.body, {
+        afterUpdate: staffProfile && memberToUpdate.principalType === "user"
+          ? async (tx) => {
+            await companyStaffProfileService(tx).upsertForMember(companyId, memberToUpdate.principalId, staffProfile);
+          }
+          : undefined,
+      });
       if (!updated) throw notFound("Member not found");
-      if (staffProfile && memberToUpdate.principalType === "user") {
-        await companyStaffProfileService(db).upsertForMember(companyId, memberToUpdate.principalId, staffProfile);
-      }
 
       await logActivity(db, {
         companyId,

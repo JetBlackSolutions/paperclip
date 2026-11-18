@@ -1,7 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { agents, authUsers, companyMemberships, companies, createDb } from "@paperclipai/db";
+import { eq } from "drizzle-orm";
+import { agents, authUsers, companyMemberships, companies, createDb, type Db } from "@paperclipai/db";
 import { createAgentSchema, sendChatMessageSchema } from "@paperclipai/shared";
+import { accessService } from "../services/access.js";
 import { assertAgentReportsToPrincipal, hybridOrgForCompany } from "../services/company-org.js";
+import { assertHybridReportingAcyclic } from "../services/company-reporting-graph.js";
 import { companyStaffProfileService } from "../services/company-staff-profiles.js";
 import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 
@@ -102,6 +106,108 @@ describe("company org and staff", () => {
       orgRole: "ceo",
       reportsTo: { type: "agent", id: agent!.id },
     })).rejects.toThrow("cycle");
+  });
+
+  it("rejects a cycle routed through a suspended member", async () => {
+    const [company] = await db.insert(companies).values({ name: "Birch", issuePrefix: "BIR" }).returning();
+    const [lead] = await db.insert(companyMemberships).values({
+      companyId: company!.id, principalType: "user", principalId: "birch-lead", status: "active", membershipRole: "owner",
+    }).returning();
+    const [agent] = await db.insert(agents).values({
+      companyId: company!.id, name: "Worker", role: "engineer", adapterType: "process", reportsToUserId: "birch-lead",
+    }).returning();
+    await db.update(companyMemberships).set({ status: "suspended" }).where(eq(companyMemberships.id, lead!.id));
+    await expect(companyStaffProfileService(db).upsertForMember(company!.id, "birch-lead", {
+      reportsTo: { type: "agent", id: agent!.id },
+    })).rejects.toThrow("cycle");
+  });
+
+  it("rejects an agent-to-agent edge that closes a cycle through a human", async () => {
+    const [company] = await db.insert(companies).values({ name: "Cedar", issuePrefix: "CED" }).returning();
+    await db.insert(companyMemberships).values({
+      companyId: company!.id, principalType: "user", principalId: "cedar-lead", status: "active", membershipRole: "owner",
+    });
+    const [agentA] = await db.insert(agents).values({ companyId: company!.id, name: "A", role: "engineer", adapterType: "process" }).returning();
+    await companyStaffProfileService(db).upsertForMember(company!.id, "cedar-lead", {
+      reportsTo: { type: "agent", id: agentA!.id },
+    });
+    const [agentB] = await db.insert(agents).values({
+      companyId: company!.id, name: "B", role: "engineer", adapterType: "process", reportsToUserId: "cedar-lead",
+    }).returning();
+    await expect(assertAgentReportsToPrincipal(db, company!.id, agentA!.id, agentB!.id, null)).rejects.toThrow("cycle");
+  });
+
+  it("clears a manager without loading the reporting graph", async () => {
+    const untouchableDb = new Proxy({}, {
+      get() {
+        throw new Error("clearing a manager must not query the database");
+      },
+    }) as Db;
+    await expect(assertHybridReportingAcyclic(untouchableDb, "company", { type: "agent", id: "agent" }, null)).resolves.toBeUndefined();
+  });
+
+  it("checks reporting cycles with a fixed number of queries in a large company", async () => {
+    const [company] = await db.insert(companies).values({ name: "Spruce", issuePrefix: "SPR" }).returning();
+    const agentIds = Array.from({ length: 400 }, () => randomUUID());
+    await db.insert(agents).values(agentIds.map((id, index) => ({
+      id,
+      companyId: company!.id,
+      name: `Agent ${index}`,
+      role: "engineer",
+      adapterType: "process",
+      reportsTo: index === 0 ? null : agentIds[index - 1],
+    })));
+    await db.insert(companyMemberships).values(Array.from({ length: 300 }, (_, index) => ({
+      companyId: company!.id,
+      principalType: "user",
+      principalId: `spruce-member-${index}`,
+      status: "active",
+      membershipRole: "operator",
+    })));
+
+    let selectCount = 0;
+    const countingDb = new Proxy(db, {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver);
+        if (property !== "select" || typeof value !== "function") return value;
+        return (...args: unknown[]) => {
+          selectCount += 1;
+          return value.apply(target, args);
+        };
+      },
+    });
+
+    const lastAgentId = agentIds[agentIds.length - 1]!;
+    await expect(assertHybridReportingAcyclic(countingDb, company!.id, { type: "agent", id: agentIds[0]! }, { type: "agent", id: lastAgentId }))
+      .rejects.toThrow("cycle");
+    expect(selectCount).toBe(3);
+
+    selectCount = 0;
+    await expect(assertHybridReportingAcyclic(countingDb, company!.id, { type: "user", id: "spruce-member-0" }, { type: "agent", id: lastAgentId }))
+      .resolves.toBeUndefined();
+    expect(selectCount).toBe(3);
+  });
+
+  it("rolls back the membership change when the staff profile is invalid", async () => {
+    const [company] = await db.insert(companies).values({ name: "Willow", issuePrefix: "WIL" }).returning();
+    await db.insert(companyMemberships).values({
+      companyId: company!.id, principalType: "user", principalId: "willow-owner", status: "active", membershipRole: "owner",
+    });
+    const [member] = await db.insert(companyMemberships).values({
+      companyId: company!.id, principalType: "user", principalId: "willow-member", status: "active", membershipRole: "operator",
+    }).returning();
+
+    await expect(accessService(db).updateMember(company!.id, member!.id, { status: "suspended" }, {
+      afterUpdate: async (tx) => {
+        await companyStaffProfileService(tx).upsertForMember(company!.id, "willow-member", {
+          reportsTo: { type: "agent", id: randomUUID() },
+        });
+      },
+    })).rejects.toThrow("Reports-to agent is not in this company");
+
+    const [after] = await db.select().from(companyMemberships).where(eq(companyMemberships.id, member!.id));
+    expect(after?.status).toBe("active");
+    expect(await companyStaffProfileService(db).getForUser(company!.id, "willow-member")).toBeNull();
   });
 
   it("excludes suspended members from the org chart", async () => {

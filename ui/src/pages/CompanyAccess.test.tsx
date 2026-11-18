@@ -317,7 +317,114 @@ describe("CompanyAccess", () => {
     expect(updateMemberMock).toHaveBeenCalledWith("company-1", "member-1", {
       membershipRole: "owner",
       status: "active",
+      staffProfile: {
+        jobTitle: null,
+        orgRole: null,
+        reportsTo: null,
+      },
     });
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("builds reports-to options for a large company within a bounded comparison budget", async () => {
+    const agentCount = 400;
+    const memberCount = 300;
+    listAgentsMock.mockResolvedValue(Array.from({ length: agentCount }, (_, index) => ({
+      id: `agent-${index}`,
+      name: `Agent ${String(agentCount - index).padStart(4, "0")}`,
+      role: "engineer",
+      status: index % 50 === 0 ? "terminated" : "active",
+    })));
+    listMembersMock.mockResolvedValue({
+      members: Array.from({ length: memberCount }, (_, index) => ({
+        id: `member-${index + 1}`,
+        companyId: "company-1",
+        principalType: "user",
+        principalId: `user-${index + 1}`,
+        status: index % 25 === 24 ? "suspended" : "active",
+        membershipRole: index === 0 ? "owner" : "operator",
+        createdAt: "2026-04-10T00:00:00.000Z",
+        updatedAt: "2026-04-10T00:00:00.000Z",
+        user: {
+          id: `user-${index + 1}`,
+          email: `member-${index + 1}@paperclip.local`,
+          name: `Member ${String(memberCount - index).padStart(4, "0")}`,
+          image: null,
+        },
+        grants: [],
+      })),
+      access: {
+        currentUserRole: "owner",
+        canManageMembers: true,
+        canInviteUsers: true,
+        canApproveJoinRequests: true,
+      },
+    });
+
+    const root = createRoot(container);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <CompanyAccess />
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+
+    const editButton = Array.from(container.querySelectorAll("tr"))
+      .find((row) => row.textContent?.includes("member-1@paperclip.local"))
+      ?.querySelector("button");
+    expect(editButton?.textContent).toBe("Edit");
+
+    // A sort over n options needs about n * log2(n) comparisons (~6,700 for
+    // 700 items). A quadratic path would need ~490,000, so fail fast well
+    // before that instead of stalling the worker.
+    const comparisonLimit = (agentCount + memberCount) * 20;
+    let comparisons = 0;
+    const originalLocaleCompare = String.prototype.localeCompare;
+    String.prototype.localeCompare = function countedLocaleCompare(this: string, ...args: unknown[]) {
+      comparisons += 1;
+      if (comparisons > comparisonLimit) {
+        throw new Error(`reports-to options exceeded ${comparisonLimit} comparisons`);
+      }
+      return Reflect.apply(originalLocaleCompare, this, args) as number;
+    } as typeof originalLocaleCompare;
+
+    try {
+      await act(async () => {
+        editButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await flushReact();
+    } finally {
+      String.prototype.localeCompare = originalLocaleCompare;
+    }
+
+    const select = Array.from(document.body.querySelectorAll("select")).find((element) =>
+      Array.from(element.options).some((option) => option.value.startsWith("agent:")),
+    );
+    expect(select).toBeTruthy();
+    const values = Array.from(select!.options).map((option) => option.value);
+    const labels = Array.from(select!.options).map((option) => option.textContent ?? "");
+
+    const expectedAgents = agentCount - agentCount / 50;
+    const expectedMembers = memberCount - memberCount / 25 - 1;
+    expect(values[0]).toBe("");
+    expect(values.filter((value) => value.startsWith("agent:"))).toHaveLength(expectedAgents);
+    expect(values.filter((value) => value.startsWith("user:"))).toHaveLength(expectedMembers);
+    expect(values).not.toContain("agent:agent-0");
+    expect(values).not.toContain("user:user-1");
+    expect(values).not.toContain("user:user-25");
+    expect(labels.slice(1)).toEqual([...labels.slice(1)].sort((left, right) => left.localeCompare(right)));
+    expect(comparisons).toBeGreaterThan(0);
+    expect(comparisons).toBeLessThanOrEqual(comparisonLimit);
 
     await act(async () => {
       root.unmount();

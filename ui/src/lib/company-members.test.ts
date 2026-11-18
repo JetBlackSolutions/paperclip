@@ -21,6 +21,7 @@ const activeMember = (overrides: Partial<CompanyMember>): CompanyMember => ({
     ? { id: overrides.principalId ?? "user-1", name: "Taylor", email: "taylor@example.com", image: null }
     : overrides.user,
   grants: overrides.grants ?? [],
+  staffProfile: overrides.staffProfile ?? null,
 });
 
 describe("company-members helpers", () => {

@@ -1142,6 +1142,11 @@ export function accessService(db: Db) {
       membershipRole?: string | null;
       status?: "pending" | "active" | "suspended";
     },
+    options?: {
+      // Runs in the same transaction after the membership row is saved, so a
+      // failure here rolls back the membership change too.
+      afterUpdate?: (tx: Db, updated: typeof companyMemberships.$inferSelect) => Promise<void>;
+    },
   ) {
     return memberAccessTransaction(async (tx) => {
       await tx.execute(sql`
@@ -1207,7 +1212,7 @@ export function accessService(db: Db) {
         await sweepMemberConnectionAccess(tx, companyId, existing.principalId, now);
       }
 
-      return tx
+      const updated = await tx
         .update(companyMemberships)
         .set({
           membershipRole: nextMembershipRole,
@@ -1217,6 +1222,8 @@ export function accessService(db: Db) {
         .where(eq(companyMemberships.id, existing.id))
         .returning()
         .then((rows) => rows[0] ?? existing);
+      await options?.afterUpdate?.(tx as unknown as Db, updated);
+      return updated;
     });
   }
 

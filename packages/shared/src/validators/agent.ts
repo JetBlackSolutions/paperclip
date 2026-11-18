@@ -173,20 +173,22 @@ export const agentRuntimeSettingsPatchSchema = z.object({
 });
 export type AgentRuntimeSettingsPatch = z.infer<typeof agentRuntimeSettingsPatchSchema>;
 
-export const updateAgentSchema = refineAgentReportsToPrincipal(
-  objectWithoutDefaults(
-    createAgentBodySchema.omit({ permissions: true, onboardingFirstAgent: true, setupId: true }),
-  )
-    .partial()
-    .extend({
-      permissions: z.never().optional(),
-      runtimeSettings: agentRuntimeSettingsPatchSchema.optional(),
-      replaceAdapterConfig: z.boolean().optional(),
-      expectedConfigurationRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-      status: z.enum(["paused", "idle", "terminated"]).optional(),
-      spentMonthlyCents: z.never().optional(),
-    }),
-);
+// Unrefined shape for callers that need .pick()/.omit(); zod rejects those on
+// schemas with refinements. Validate requests with updateAgentSchema.
+export const updateAgentBodySchema = objectWithoutDefaults(
+  createAgentBodySchema.omit({ permissions: true, onboardingFirstAgent: true, setupId: true }),
+)
+  .partial()
+  .extend({
+    permissions: z.never().optional(),
+    runtimeSettings: agentRuntimeSettingsPatchSchema.optional(),
+    replaceAdapterConfig: z.boolean().optional(),
+    expectedConfigurationRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    status: z.enum(["paused", "idle", "terminated"]).optional(),
+    spentMonthlyCents: z.never().optional(),
+  });
+
+export const updateAgentSchema = refineAgentReportsToPrincipal(updateAgentBodySchema);
 
 export type UpdateAgent = z.infer<typeof updateAgentSchema>;
 

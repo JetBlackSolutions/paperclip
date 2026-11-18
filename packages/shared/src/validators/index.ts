@@ -349,6 +349,7 @@ export {
   builtInAgentProvisionSchema,
   builtInAgentResetSchema,
   createAgentHireSchema,
+  updateAgentBodySchema,
   updateAgentSchema,
   agentRuntimeSettingsPatchSchema,
   type AgentRuntimeSettingsPatch,
