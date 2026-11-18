@@ -120,7 +120,7 @@ export async function loadStaffProfilesByUserId(
 export async function loadActiveHumanMembers(
   db: Db,
   companyId: string,
-): Promise<Array<{ userId: string; membershipRole: string | null; status: string; displayName: string }>> {
+): Promise<Array<{ userId: string; membershipRole: string | null; status: string; displayName: string; image: string | null }>> {
   const members = await db
     .select({
       userId: companyMemberships.principalId,
@@ -143,6 +143,7 @@ export async function loadActiveHumanMembers(
     return {
       ...member,
       displayName: user?.name?.trim() || user?.email?.trim() || member.userId,
+      image: user?.image ?? null,
     };
   });
 }

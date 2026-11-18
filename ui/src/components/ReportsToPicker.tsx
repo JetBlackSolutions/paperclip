@@ -1,3 +1,4 @@
+import { Identity } from "./Identity";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { useState, type ReactElement } from "react";
 import type { Agent } from "@paperclipai/shared";
@@ -20,8 +21,16 @@ export function ReportsToPicker({
   chooseLabel = "Reports to...",
   trigger,
   disabledAgentIds = [],
+  humans = [],
+  humanValue = null,
+  onHumanChange,
+  disabledHumanIds = [],
 }: {
   agents: Agent[];
+  humans?: Array<{ id: string; name: string; image?: string | null }>;
+  humanValue?: string | null;
+  onHumanChange?: (id: string) => void;
+  disabledHumanIds?: string[];
   value: string | null;
   onChange: (id: string | null) => void;
   disabled?: boolean;
@@ -36,9 +45,10 @@ export function ReportsToPicker({
   const rows = agents.filter(
     (a) => a.status !== "terminated" && !exclude.has(a.id),
   );
+  const currentHuman = humanValue ? humans.find((h) => h.id === humanValue) : null;
   const current = value ? agents.find((a) => a.id === value) : null;
   const terminatedManager = current?.status === "terminated";
-  const unknownManager = Boolean(value && !current);
+  const unknownManager = Boolean((value && !current) || (humanValue && !currentHuman));
 
   return (
     <FlyoutAppearanceProvider><Popover open={open} onOpenChange={setOpen}>
@@ -57,6 +67,8 @@ export function ReportsToPicker({
               <User className="h-3 w-3 shrink-0 text-muted-foreground" />
               <span className="min-w-0 truncate text-muted-foreground">Unknown manager (stale ID)</span>
             </>
+          ) : currentHuman ? (
+            <Identity name={currentHuman.name} avatarUrl={currentHuman.image} size="sm" />
           ) : current ? (
             <>
               <AgentAvatar agent={current} size={16} className="h-3 w-3 shrink-0 text-muted-foreground"/>
@@ -84,10 +96,10 @@ export function ReportsToPicker({
         <FlyoutOptions className="max-h-80 overflow-y-auto">
         <button
           type="button"
-          aria-pressed={value === null}
+          aria-pressed={value === null && !humanValue}
           className={cn(
             "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50",
-            value === null && "bg-accent",
+            value === null && !humanValue && "bg-accent",
           )}
           onClick={() => {
             onChange(null);
@@ -96,7 +108,7 @@ export function ReportsToPicker({
         >
           <User className="size-5 shrink-0" aria-hidden />
           <span className="min-w-0 flex-1 text-left">No manager</span>
-          {value === null && <Check className="size-4 shrink-0" aria-hidden />}
+          {value === null && !humanValue && <Check className="size-4 shrink-0" aria-hidden />}
         </button>
         {terminatedManager && (
           <div className="flex min-w-0 items-center gap-2 overflow-hidden px-2 py-1.5 text-xs text-muted-foreground border-b border-border mb-0.5">
@@ -111,6 +123,21 @@ export function ReportsToPicker({
             Saved manager is missing from this organization. Choose a new manager or clear.
           </div>
         )}
+        {onHumanChange && humans.map((human) => (
+          <button
+            type="button"
+            key={`user:${human.id}`}
+            aria-pressed={human.id === humanValue}
+            disabled={disabledHumanIds.includes(human.id)}
+            title={disabledHumanIds.includes(human.id) ? "Would create a reporting loop" : undefined}
+            className="flex items-center gap-2 w-full min-w-0 px-2 py-1.5 text-xs rounded hover:bg-accent/50 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => { onHumanChange(human.id); setOpen(false); }}
+          >
+            <Identity name={human.name} avatarUrl={human.image} size="sm" />
+            <span className="text-muted-foreground">Human</span>
+            {human.id === humanValue && <Check className="size-4 shrink-0" aria-hidden />}
+          </button>
+        ))}
         {rows.map((a) => (
           <button
             type="button"

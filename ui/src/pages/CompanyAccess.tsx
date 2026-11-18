@@ -206,6 +206,15 @@ export function CompanyAccess() {
     },
   });
 
+  const requestedMember = searchParams.get("member");
+  useEffect(() => {
+    if (!requestedMember || !membersQuery.data) return;
+    const member = membersQuery.data.members.find((item) => item.principalId === requestedMember);
+    if (member && membersQuery.data.access.canManageMembers) setEditingMemberId(member.id);
+    // Consume the deep link so Cancel, Back and refetch do not reopen the editor.
+    setSearchParams((previous) => { const next = new URLSearchParams(previous); next.delete("member"); return next; }, { replace: true });
+  }, [requestedMember, membersQuery.data, setSearchParams]);
+
   const editingMember = useMemo(
     () => membersQuery.data?.members.find((member) => member.id === editingMemberId) ?? null,
     [editingMemberId, membersQuery.data?.members],

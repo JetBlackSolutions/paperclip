@@ -7,7 +7,7 @@ Active human company members can appear on the org chart next to agents. This cl
 - **Humans:** users with an **active** company membership.
 - **Agents:** unchanged; terminated agents stay off the chart.
 
-Org API nodes include `kind`: `user` or `agent`, plus `title` for display.
+Org API nodes include `kind`: `user` or `agent`, plus `title` for display and `image` for the saved human account profile photo. Photos use the existing account data; this does not fetch or grant access to a new external directory.
 
 ## Set title and reports-to
 
@@ -20,7 +20,7 @@ These fields live in `company_staff_profiles`. Membership role and status still 
 
 ## View the hybrid org chart
 
-Open **Org chart** (`/org`). Human cards use a distinct style: user icon, primary border, and a **Human member** label. Agent cards are unchanged.
+Open **Org chart** (`/org`). Human cards use a distinct style: account photo (or a user-icon fallback) and a **Human member** label. Click a human card to open that member in Settings when you have member-management permission. Agent cards are unchanged.
 
 Exported org SVG treats human nodes with a separate accent color.
 
@@ -28,7 +28,7 @@ Exported org SVG treats human nodes with a separate accent color.
 
 When creating or updating an agent, set **reports to** to a human manager via `reportsToUserId` (API) or agent configuration. An agent cannot set both `reportsTo` (agent) and `reportsToUserId` (human).
 
-The manager must be an active company member.
+The manager must be an active company member. The agent overview and identity editor both offer human and agent managers. Selecting one clears the other manager field. Mixed human/agent reporting loops are rejected. Reporting relationships do not grant credentials, permissions, or approval authority.
 
 ## Agent chat to other members
 

@@ -25,7 +25,7 @@ describe("company org and staff", () => {
   it("builds a hybrid org chart with humans and agents", async () => {
     const [company] = await db.insert(companies).values({ name: "Acorn", issuePrefix: "ACORN" }).returning();
     const now = new Date();
-    const [humanCeo] = await db.insert(authUsers).values({ id: "ceo-user", email: "ceo@example.com", name: "Avery", createdAt: now, updatedAt: now }).returning();
+    const [humanCeo] = await db.insert(authUsers).values({ id: "ceo-user", email: "ceo@example.com", name: "Avery", image: "https://example.com/avery.png", createdAt: now, updatedAt: now }).returning();
     const [humanOps] = await db.insert(authUsers).values({ id: "ops-user", email: "ops@example.com", name: "Riley", createdAt: now, updatedAt: now }).returning();
     await db.insert(companyMemberships).values([
       { companyId: company!.id, principalType: "user", principalId: humanCeo!.id, status: "active", membershipRole: "owner" },
@@ -50,7 +50,7 @@ describe("company org and staff", () => {
 
     const tree = await hybridOrgForCompany(db, company!.id);
     const ceo = tree.find((node) => node.kind === "user" && node.id === humanCeo!.id);
-    expect(ceo).toMatchObject({ name: "Avery", role: "ceo", title: "Chief Executive" });
+    expect(ceo).toMatchObject({ name: "Avery", role: "ceo", title: "Chief Executive", image: "https://example.com/avery.png" });
     expect(ceo?.reports.some((node) => node.kind === "user" && node.id === humanOps!.id)).toBe(true);
     expect(ceo?.reports.some((node) => node.kind === "agent" && node.id === agentCoo!.id)).toBe(true);
     const coo = ceo?.reports.find((node) => node.kind === "agent" && node.id === agentCoo!.id);
