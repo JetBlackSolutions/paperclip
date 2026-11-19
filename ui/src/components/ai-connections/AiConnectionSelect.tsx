@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import { AppLogo } from "@/pages/apps/AppLogo";
 import { Button } from "@/components/ui/button";
-import { aiConnectionDisplayLabel, aiConnectionProblem, personalAiDefault } from "./model";
+import { aiConnectionDisplayLabel, aiConnectionProblem, offeredAiConnections, personalAiDefault } from "./model";
 import type { AiConnectionPickerProps } from "./AiConnectionPicker";
 import type { AiConnectionSummary } from "./model";
 
@@ -53,7 +53,7 @@ export function AiConnectionSelect({
         );
   const compatibilityModel = (provider: string) => adapterType === "pi_local"
     ? model || `${provider}/` : provider === "openrouter" ? "openrouter/" : undefined;
-  const compatible = connections
+  const compatible = offeredAiConnections(connections, (c) => c.id === selected?.id && c.grantId === selected?.grantId)
     .filter(
       (c) =>
         c.companyId === requirement.companyId &&
