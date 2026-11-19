@@ -80,13 +80,18 @@ export function layoutOrganization(roots: OrgNode[], viewport: { width: number; 
       const width = tier === 1 ? g.leaderWidth : tier === 2 ? g.managerWidth : g.memberWidth;
       const height = tier === 1 ? g.leaderHeight : tier === 2 ? g.managerHeight : g.memberHeight;
       const childBlocks = reports.map(child => build(child, depth + 1));
-      // Side-entry reporting lines read as an outline: stack every direct
-      // report and its complete subtree before the next sibling. Keep a gutter
-      // left of the children so ancestor lines cannot run through descendants.
-      const children = pack(childBlocks, 1, g.gap);
-      const indent = g.gap * 2;
-      const blockWidth = Math.max(width, children.roots.length ? indent + children.width : 0);
-      children.roots.forEach(child => shift(child, indent, height + g.levelGap));
+      const teams = childBlocks.filter(block => block.roots[0].leader);
+      const members = childBlocks.filter(block => !block.roots[0].leader);
+      // A mixed leadership team keeps its individual contributors in a compact
+      // side column, instead of placing them below the deepest reporting branch.
+      // Teams sit side by side and wrap to the viewport: stacking every report
+      // in one column turned a 50-agent company into an unreadable sliver.
+      const branches = teams.length && members.length
+        ? [...teams, pack(members, 1, g.gap)]
+        : childBlocks;
+      const children = pack(branches, columns, g.gap);
+      const blockWidth = Math.max(width, children.width);
+      children.roots.forEach(child => shift(child, (blockWidth - children.width) / 2, height + g.levelGap));
       return {
         roots: [{
           id: node.id,
@@ -96,7 +101,7 @@ export function layoutOrganization(roots: OrgNode[], viewport: { width: number; 
           name: node.name,
           role: node.role,
           status: node.status,
-          x: 0,
+          x: (blockWidth - width) / 2,
           y: 0,
           width,
           height,
