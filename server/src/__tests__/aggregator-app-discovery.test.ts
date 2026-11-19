@@ -49,6 +49,28 @@ describe("aggregator inventory adapters", () => {
     expect(await new AsyncFunction("tools", EXECUTOR_INVENTORY_CODE)({})).toEqual({ discoveryUnavailable: true });
     expect(apps[0].accounts[0]).toMatchObject({ status: "EXPIRED", managementUrl: "https://self-host.example/my-org/integrations/notion" });
   });
+  it("runs the inventory code against Executor's { ok, data } envelope as well as a bare payload", async () => {
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    const runInventory = (coreTools: unknown) => new AsyncFunction("tools", EXECUTOR_INVENTORY_CODE)({ executor: { coreTools } });
+    const connection = { integration: "notion", name: "Work", owner: "org", lastHealth: { status: "healthy" } };
+    const envelope = (value: unknown) => ({ ok: true, data: value });
+    const bare = (value: unknown) => value;
+    for (const wrap of [envelope, bare]) {
+      const result = await runInventory({
+        connections: {
+          list: async () => wrap({ connections: [connection] }),
+          createHandoff: async ({ integration }: { integration: string }) => wrap({ url: `https://self-host.example/my-org/integrations/${integration}?addAccount=1` }),
+        },
+        integrations: { list: async () => wrap({ integrations: [{ slug: "notion" }] }) },
+      });
+      expect(result).toEqual({ connections: [connection], integrations: [{ slug: "notion" }], managementUrls: { notion: "https://self-host.example/my-org/integrations/notion?addAccount=1" } });
+      const apps = await discoverExecutorApps({ toolNames: ["execute"], call: async () => ({ structuredContent: { status: "completed", result } }) });
+      expect(apps[0].accounts[0]).toMatchObject({ appSlug: "notion", status: "ACTIVE", managementUrl: "https://self-host.example/my-org/integrations/notion" });
+    }
+    const integrations = { list: async () => envelope({ integrations: [] }) };
+    await expect(runInventory({ connections: { list: async () => ({ ok: false, error: { code: "boom" } }) }, integrations })).rejects.toThrow("connections.list failed");
+    expect(await runInventory({ connections: { list: async () => envelope({}) }, integrations })).toEqual({ discoveryUnavailable: true });
+  });
   it("rejects unsupported, failed, malformed and truncated Executor inventories", async () => {
     await expect(discoverExecutorApps({ toolNames: [], call: vi.fn() })).rejects.toThrow("unavailable");
     await expect(discoverExecutorApps({ toolNames: ["execute"], call: async () => ({ structuredContent: { result: { incompatible: true } } }) })).rejects.toBeInstanceOf(AggregatorDiscoveryUnavailableError);
