@@ -24,6 +24,9 @@ import { actorBinding } from "../actor.js";
 import { assertOAuthRedirectConstraints, randomOauthToken, base64UrlSha256 } from "./authorization-constraints.js";
 import type { createPersonalConnectionIdentity } from "../connections/personal-identity.js";
 
+/** OpenID Connect sign-in scopes. A server offering only these grants no API scopes a request could narrow. */
+const OIDC_SIGN_IN_SCOPES = new Set(["openid", "profile", "email", "offline_access"]);
+
 type Dependencies = {
   now: () => Date;
   getConnectionRow(idOrUid: string, companyId?: string): Promise<typeof toolConnections.$inferSelect>;
@@ -469,13 +472,29 @@ export function createOAuthAuthorizationStart(db: Db, dependencies: Dependencies
     const authorizationScopes = normalizeOauthScopes(
       galleryMethod ? (requestedScopes ?? []) : (input.scopes ?? endpoints.scopes),
     );
+    // A catalog method without reviewed scopes (a self-registering MCP server such as
+    // Executor) sends no scope, so an OIDC server applies its default and returns no
+    // refresh token: each sign-in then lasts one access-token lifetime. Ask for refresh
+    // access only when the server offers nothing but OIDC sign-in scopes, so an explicit
+    // list cannot narrow API access the server's default would have granted.
+    const uncuratedSignInOnly =
+      Boolean(galleryMethod) &&
+      !input.scopes &&
+      normalizeOauthScopes(galleryMethod?.defaults?.scopesHint).length === 0 &&
+      endpoints.scopes.length > 0 &&
+      endpoints.scopes.every((scope) => OIDC_SIGN_IN_SCOPES.has(scope));
     if (
-      !galleryMethod &&
+      (!galleryMethod || uncuratedSignInOnly) &&
       endpoints.offlineAccessSupported &&
       (!endpoints.grantTypesSupported?.length ||
         endpoints.grantTypesSupported.includes("refresh_token")) &&
       !authorizationScopes.includes("offline_access")
-    ) authorizationScopes.push("offline_access");
+    ) {
+      // An explicit scope list replaces the server's default, so keep `openid`.
+      if (uncuratedSignInOnly && authorizationScopes.length === 0 && endpoints.scopes.includes("openid"))
+        authorizationScopes.push("openid");
+      authorizationScopes.push("offline_access");
+    }
 
     await db
       .delete(toolOauthStates)
@@ -549,7 +568,7 @@ export function createOAuthAuthorizationStart(db: Db, dependencies: Dependencies
         "prompt",
         reviewedAuthorizationParams.prompt,
       );
-    else if (!galleryMethod && authorizationScopes.includes("offline_access"))
+    else if ((!galleryMethod || uncuratedSignInOnly) && authorizationScopes.includes("offline_access"))
       // OIDC offline access requires consent unless the provider has another
       // established basis for granting it. A generic server has no reviewed override.
       authorizationUrl.searchParams.set("prompt", "consent");

@@ -11,6 +11,11 @@ export async function startOAuthRefreshFixture({
   grantTypes = ["authorization_code", "refresh_token"],
   challengeScope = true,
   resourceScopes = ["mcp:read"],
+  // Scopes the authorization server offers besides offline_access. Pass OIDC sign-in
+  // scopes only (openid, profile, email) to model a sign-in-only server such as Executor.
+  serverScopes = ["mcp:read", "admin:all"],
+  // Whether /mcp requires the mcp:read scope. false authorizes by token alone, as Executor does.
+  requireMcpScope = true,
   accessTokenLifetimeSeconds = 3600,
 } = {}) {
   const clients = new Map();
@@ -24,7 +29,7 @@ export async function startOAuthRefreshFixture({
   const now = () => Date.now() + clockOffset;
   const issuer = () => `${origin}/identity/acme`;
   const resource = () => `${origin}/mcp`;
-  const supportedScopes = () => ["mcp:read", "admin:all", ...(supportsOfflineAccess ? ["offline_access"] : [])];
+  const supportedScopes = () => [...serverScopes, ...(supportsOfflineAccess ? ["offline_access"] : [])];
   const json = (res, status, body) => {
     res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify(body));
@@ -139,7 +144,7 @@ export async function startOAuthRefreshFixture({
           res.end();
           return;
         }
-        if (!token.scopes.includes("mcp:read")) { json(res, 403, { error: "insufficient_scope" }); return; }
+        if (requireMcpScope && !token.scopes.includes("mcp:read")) { json(res, 403, { error: "insufficient_scope" }); return; }
         if (req.method !== "POST") { res.writeHead(405); res.end(); return; }
         const rpc = JSON.parse(rawBody);
         events.push({ kind: "mcp", method: rpc.method });
