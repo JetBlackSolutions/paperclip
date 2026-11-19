@@ -4,6 +4,7 @@ import {
   defaultAiConnectionName,
   bindingProblem,
   matchesAiRequirement,
+  offeredAiConnections,
   personalAiDefault,
   type AiConnectionSummary,
   type AiConnectionRequirement,
@@ -158,5 +159,16 @@ describe("default AI account names", () => {
     expect(defaultAiConnectionName("Dotta", "openai", "subscription")).toBe("Dotta's ChatGPT subscription account");
     expect(defaultAiConnectionName("You", "openai", "api_key")).toBe("My OpenAI API account");
     expect(defaultAiConnectionName(undefined, "openrouter", "api_key")).toBe("My OpenRouter API account");
+  });
+});
+
+describe("offered AI connections", () => {
+  it("stops offering removed accounts unless one is still in use", () => {
+    const accounts = (["connected", "needs_attention", "expired", "revoked"] as const).map((status) => ({
+      ...account, id: status, grantId: `${status}-grant`, status,
+    }));
+    expect(offeredAiConnections(accounts).map((a) => a.id)).toEqual(["connected", "needs_attention", "expired"]);
+    expect(offeredAiConnections(accounts, (a) => a.id === "revoked").map((a) => a.id))
+      .toEqual(["connected", "needs_attention", "expired", "revoked"]);
   });
 });

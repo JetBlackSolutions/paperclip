@@ -93,6 +93,18 @@ export function personalAiDefault(
   );
 }
 
+/**
+ * Accounts to offer in a picker. Removing an account revokes its grant but keeps the record for
+ * run and cost history, so removed accounts would otherwise pile up in every picker. They are not
+ * offered again, except one that is still in use (`keep`), so its problem stays visible there.
+ */
+export function offeredAiConnections<T extends Pick<AiConnectionSummary, "status">>(
+  connections: T[],
+  keep: (connection: T) => boolean = () => false,
+): T[] {
+  return connections.filter((connection) => connection.status !== "revoked" || keep(connection));
+}
+
 export function aiConnectionProblem(connection?: AiConnectionSummary) {
   if (!connection)
     return "No connection selected. Connect an account to continue.";

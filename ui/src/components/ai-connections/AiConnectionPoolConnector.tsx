@@ -25,7 +25,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AiConnectionUsagePanel } from "./AiConnectionUsagePanel";
-import { AI_PROVIDERS, aiMethodLabel } from "./model";
+import { AI_PROVIDERS, aiMethodLabel, offeredAiConnections } from "./model";
 
 const configOf = ({ name, enabled, members, mode, thresholdPercent }: AiConnectionPoolConfig): AiConnectionPoolConfig => ({ name, enabled, members, mode, thresholdPercent });
 const emptyConfig = (): AiConnectionPoolConfig => ({ name: "AI connection pool", enabled: false, members: [], mode: "round_robin", thresholdPercent: 90 });
@@ -182,12 +182,13 @@ function PoolConnector({ companyId, pluginKey, connection }: { companyId: string
 }
 function ConnectionPicker({ accounts, selected, disabled, onChange, onRefresh }: { accounts: AiManagedConnectionSummary[]; selected: AiConnectionPoolMember[]; disabled: boolean; onChange: (members: AiConnectionPoolMember[]) => void; onRefresh: () => void }) {
   const [search, setSearch] = useState("");
-  const filtered = accounts.filter(account => `${account.name} ${AI_PROVIDERS[account.provider].name}`.toLowerCase().includes(search.toLowerCase()));
+  const offered = offeredAiConnections(accounts, account => selected.some(member => member.binding.connectionId === account.id && member.binding.grantId === account.grantId));
+  const filtered = offered.filter(account => `${account.name} ${AI_PROVIDERS[account.provider].name}`.toLowerCase().includes(search.toLowerCase()));
   return <div className="space-y-4">
     <div className="relative"><Search className="pointer-events-none absolute left-3 top-3 size-4 text-muted-foreground" /><Input aria-label="Search connections" placeholder="Search connections…" value={search} onChange={event => setSearch(event.target.value)} className="pl-9" /></div>
     <div className="max-h-80 overflow-y-auto rounded-lg border border-border divide-y divide-border">
       {filtered.map(account => { const existing = selected.find(member => member.binding.connectionId === account.id); const checked = existing?.binding.grantId === account.grantId; return <label key={account.grantId} className="flex cursor-pointer items-center gap-3 px-4 py-3 hover:bg-accent/50"><Checkbox checked={checked} disabled={disabled || (!checked && (account.status !== "connected" || Boolean(existing)))} onCheckedChange={value => onChange(value ? [...selected, memberOf(account)] : selected.filter(member => member.binding.connectionId !== account.id))} aria-label={account.name} /><AppLogo name={AI_PROVIDERS[account.provider].name} logoUrl={AI_PROVIDERS[account.provider].logo} size={32} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{account.name}</span><span className="block text-xs text-muted-foreground">{aiMethodLabel(account.provider, account.method)} · {account.ownership === "shared" ? "Shared" : "Personal"}</span></span>{account.status !== "connected" && <span className="text-xs text-muted-foreground">Needs attention</span>}</label>; })}
-      {filtered.length === 0 && <p className="px-4 py-6 text-sm text-muted-foreground">{accounts.length ? "No matching connections." : "No AI connections yet."}</p>}
+      {filtered.length === 0 && <p className="px-4 py-6 text-sm text-muted-foreground">{offered.length ? "No matching connections." : "No AI connections yet."}</p>}
     </div>
     <div className="flex items-center justify-between gap-3 text-sm"><Link to="/apps" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground">Connect a new account<ExternalLink className="size-3.5" /></Link><Button variant="ghost" size="sm" onClick={onRefresh}>Refresh</Button></div>
   </div>;
