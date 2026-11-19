@@ -369,6 +369,7 @@ describe("OrgChart mobile gestures", () => {
     expect(card.querySelector(".org-card-badge-slot")).not.toBeNull();
     expect(card.querySelector(".org-card-human-avatar[data-slot=avatar]")).not.toBeNull();
     expect(card.querySelector(".org-card-model")?.textContent).toBe("Human member");
+    expect(card.querySelector(".org-card-status")?.textContent).toBe("Active");
     expect(card.querySelector(".org-card-star")).toBeNull();
     await act(async () => card.click());
     expect(navigateMock).toHaveBeenCalledWith("/company/settings/members?member=human");

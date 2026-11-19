@@ -1,3 +1,4 @@
+import { currentWakeCommentsOutcome } from "./current-wake-comments-outcome.js";
 import { assertAgentInteraction } from "../agent-interaction-policy.js";
 import { authorizationDeniedDetails } from "../authorization.js";
 import { budgetServiceInTransaction } from "../budgets.js";
@@ -823,11 +824,12 @@ export class PaperclipRunnerToolAuthority {
       if (!this.binding.currentWakeComments) {
         throw new Error("paperclip_runner_tool_not_advertised");
       }
-      return readCurrentWakeComments(
+      const wakeBinding = this.binding.currentWakeComments;
+      return currentWakeCommentsOutcome(() => readCurrentWakeComments(
         this.db,
-        this.binding.currentWakeComments,
+        wakeBinding,
         input,
-      );
+      ));
     }
     if (call.tool === LIST_CHAT_ATTACHMENTS_TOOL_NAME) {
       return listAuthorizedChatAttachments({

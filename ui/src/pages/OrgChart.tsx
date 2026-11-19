@@ -593,7 +593,7 @@ export function OrgChart({ orgTree: providedOrgTree, agents: providedAgents, mat
               .replace(/^(?:Claude|Codex)\s+/i, "");
             const effort = agent ? readComposerRunSettings({ adapterConfig: agent.adapterConfig }, agent.adapterType).effort : null;
             const status = (agent?.status ?? node.status).replace(/_/g, " ");
-            const statusLabel = status === "active" ? "Idle" : status.charAt(0).toUpperCase() + status.slice(1);
+            const statusLabel = status === "active" && !isUser ? "Idle" : status.charAt(0).toUpperCase() + status.slice(1);
             const starPending = membershipMutation.isPending && membershipMutation.variables?.resourceId === node.id;
             const openAgent = () => {
               if (isUser) {
