@@ -88,7 +88,7 @@ function layoutTree(node: OrgNode, x: number, y: number): LayoutNode {
   return {
     id: node.id,
     kind: node.kind,
-          image: node.image,
+    image: node.image,
     title: node.title,
     name: node.name,
     role: node.role,
