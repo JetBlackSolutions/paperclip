@@ -16,6 +16,7 @@ import { honchoManagedArguments } from "../honcho-connection.js";
 import { assertGoogleChatToolArgumentsSupported, googleChatToolInputSchema } from "../google-chat-tool-policy.js";
 import { gmailArchiveToolInputSchema } from "../gmail-archive-tool-policy.js";
 import { githubOwnerToolInputSchema } from "./github-default-owner.js";
+import { mcpPrivateEndpointAllowlist } from "./private-endpoints.js";
 
 type ConnectionSettings = {
   config: Record<string, unknown>;
@@ -168,7 +169,9 @@ export function normalizeConnectionMethodConfig(
     );
   }
   const endpoint = resolvedServerUrl ? new URL(resolvedServerUrl) : null;
-  if (endpoint && endpoint.protocol !== "https:") {
+  // Plain HTTP only for an origin the operator allowlisted for a private link.
+  if (endpoint && endpoint.protocol !== "https:"
+    && !mcpPrivateEndpointAllowlist().has(endpoint.origin.toLowerCase())) {
     throw badRequest("Connection server URL must use HTTPS");
   }
   const headers: Record<string, string> = {};

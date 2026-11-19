@@ -4347,6 +4347,39 @@ credentials, query strings, fragments, and wildcards are ignored. Matching is
 by exact normalized origin, so allowing one port does not allow another.
 Link-local destinations remain denied even when explicitly listed.
 
+## Remote MCP Private Endpoints
+
+A public authenticated deployment (`authenticated` mode, `public` exposure)
+rejects remote MCP connections to loopback, RFC1918/private, and link-local
+addresses. Server owners can opt a trusted private MCP server in, such as one
+reached over a private link, with a comma-separated list of exact origins:
+
+```sh
+PAPERCLIP_MCP_PRIVATE_ENDPOINT_ALLOWLIST=http://10.10.0.1:3000
+```
+
+The entries follow the same rules as the HTTP adapter allowlist: scheme,
+hostname, and optional port only, matched by exact origin. The check applies
+both when a connection is saved and when each MCP request is sent, with DNS
+results pinned. Link-local destinations remain denied even when listed. A
+listed origin may use plain `http`, for a link that is already private or
+encrypted (such as WireGuard); every other connector server URL still needs HTTPS.
+
+## Self-Hosted Honcho
+
+The Honcho memory connector uses Honcho's hosted MCP server
+(`https://mcp.honcho.dev`) by default. To use a self-hosted Honcho instead, run
+Honcho's MCP server next to your Honcho API (it reads the API address from its
+own `HONCHO_API_URL`) and point Paperclip at it:
+
+```sh
+PAPERCLIP_HONCHO_MCP_URL=http://10.10.0.1:3000/mcp
+```
+
+New Honcho connections then use that server, with the same API key and
+workspace fields. Existing connections keep the address they were saved with. On a public authenticated deployment, a private address also needs its
+origin in `PAPERCLIP_MCP_PRIVATE_ENDPOINT_ALLOWLIST`.
+
 ## Company Deletion Toggle
 
 Company deletion is intended as a dev/debug capability and can be disabled at runtime:

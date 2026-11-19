@@ -193,6 +193,7 @@ import {
   DEFAULT_REMOTE_HTTP_RESPONSE_TIMEOUT_MS,
   type GuardedRemoteHttpFetchOptions,
 } from "./remote-http-fetch.js";
+import { mcpPrivateEndpointAllowlist } from "./tool-access/private-endpoints.js";
 import {
   REMOTE_URL_SECRET_CONFIG_PATH,
   remoteUrlCredentialMatchesPublicUrl,
@@ -3761,6 +3762,7 @@ export function createToolGatewayService(
   function remoteHttpFetchOptions(): GuardedRemoteHttpFetchOptions {
     return {
       allowPrivateNetwork: allowPrivateRemoteEndpoints(),
+      privateEndpointAllowlist: mcpPrivateEndpointAllowlist(),
       error: (message, code) => new ToolGatewayHttpError(422, message, code),
     };
   }

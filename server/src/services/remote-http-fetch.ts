@@ -10,6 +10,7 @@ import {
   isAlwaysDeniedLinkLocalIp,
   isPrivateOrReservedIp,
   normalizeIpAddress,
+  remoteHttpPrivateNetworkAllowed,
   resolveApprovedRemoteHttpAddresses,
   type RemoteHttpEndpointErrorFactory,
   type RemoteHttpEndpointGuardOptions,
@@ -94,9 +95,15 @@ export type GuardedRemoteHttpFetchOptions = RemoteHttpEndpointGuardOptions & {
 export async function guardedRemoteHttpFetch(
   url: string | URL,
   init: RequestInit,
-  options: GuardedRemoteHttpFetchOptions,
+  requestOptions: GuardedRemoteHttpFetchOptions,
 ): Promise<Response> {
   const endpoint = url instanceof URL ? url : new URL(url);
+  // Decide private-network access once for this exact origin, so the address
+  // approval and the socket peer check below apply the same rule.
+  const options = {
+    ...requestOptions,
+    allowPrivateNetwork: remoteHttpPrivateNetworkAllowed(endpoint, requestOptions),
+  };
   const approved = await resolveApprovedRemoteHttpAddresses(endpoint, options, options.error);
   const literalHost = isIP(endpoint.hostname.replace(/^\[|\]$/g, "")) !== 0;
   const platformFetch = options.unpinnedFetch ?? fetch;

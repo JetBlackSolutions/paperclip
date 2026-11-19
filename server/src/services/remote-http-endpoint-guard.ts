@@ -10,11 +10,50 @@ export type RemoteHttpEndpointLookup = (hostname: string) => Promise<LookupResul
 
 export type RemoteHttpEndpointGuardOptions = {
   allowPrivateNetwork?: boolean;
+  /**
+   * Exact origins (scheme, host and port) an operator allows to reach private
+   * addresses when `allowPrivateNetwork` is off, such as a self-hosted server
+   * on a private link. Link-local addresses stay denied either way.
+   */
+  privateEndpointAllowlist?: ReadonlySet<string>;
   dnsTimeoutMs?: number;
   lookup?: RemoteHttpEndpointLookup;
 };
 
 export type RemoteHttpEndpointErrorFactory = (message: string, code: string) => Error;
+
+/** Whether this endpoint may reach private addresses: deployment-wide, or by an exact allowlisted origin. */
+export function remoteHttpPrivateNetworkAllowed(
+  endpoint: URL,
+  options: Pick<RemoteHttpEndpointGuardOptions, "allowPrivateNetwork" | "privateEndpointAllowlist">,
+): boolean {
+  return Boolean(options.allowPrivateNetwork)
+    || Boolean(options.privateEndpointAllowlist?.has(endpoint.origin.toLowerCase()));
+}
+
+/** An allowlist entry must be a bare http(s) origin: no path, query, fragment or credentials. */
+export function normalizePrivateEndpointOrigin(value: string): string | null {
+  let endpoint: URL;
+  try {
+    endpoint = new URL(value);
+  } catch {
+    return null;
+  }
+  if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") return null;
+  if (endpoint.username || endpoint.password || endpoint.search || endpoint.hash) return null;
+  if (endpoint.pathname !== "/") return null;
+  return endpoint.origin.toLowerCase();
+}
+
+/** Parse a comma-separated operator allowlist of private origins, ignoring invalid entries. */
+export function parsePrivateEndpointAllowlist(raw: string): ReadonlySet<string> {
+  return new Set(
+    raw
+      .split(",")
+      .map((entry) => normalizePrivateEndpointOrigin(entry.trim()))
+      .filter((entry): entry is string => entry !== null),
+  );
+}
 
 export function parseRemoteHttpEndpoint(
   value: unknown,
@@ -65,13 +104,14 @@ export async function resolveApprovedRemoteHttpAddresses(
   error: RemoteHttpEndpointErrorFactory,
 ): Promise<string[]> {
   const hostname = endpoint.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  if (!options.allowPrivateNetwork && (hostname === "localhost" || hostname.endsWith(".localhost"))) {
+  const allowPrivateNetwork = remoteHttpPrivateNetworkAllowed(endpoint, options);
+  if (!allowPrivateNetwork && (hostname === "localhost" || hostname.endsWith(".localhost"))) {
     throw error("Remote MCP connection URL cannot target private or reserved network addresses", "remote_http_private_endpoint");
   }
 
   const literalVersion = isIP(hostname);
   if (literalVersion !== 0) {
-    if (isAlwaysDeniedLinkLocalIp(hostname) || (!options.allowPrivateNetwork && isPrivateOrReservedIp(hostname))) {
+    if (isAlwaysDeniedLinkLocalIp(hostname) || (!allowPrivateNetwork && isPrivateOrReservedIp(hostname))) {
       throw error("Remote MCP connection URL cannot target private or reserved network addresses", "remote_http_private_endpoint");
     }
     return [hostname];
@@ -95,7 +135,7 @@ export async function resolveApprovedRemoteHttpAddresses(
   }
   if (results.some((result) =>
     isAlwaysDeniedLinkLocalIp(result.address)
-    || (!options.allowPrivateNetwork && isPrivateOrReservedIp(result.address)))) {
+    || (!allowPrivateNetwork && isPrivateOrReservedIp(result.address)))) {
     throw error("Remote MCP connection URL cannot resolve to private or reserved network addresses", "remote_http_private_endpoint");
   }
   return results.map((result) => result.address);

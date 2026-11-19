@@ -2639,6 +2639,38 @@ describeEmbeddedPostgres("tool access service", () => {
     expect((await service.getConnection(connected.connectionId)).agentInstructions).toEqual({ enabled: false, text: "Keep this custom guidance." });
   });
 
+  it("connects Honcho to this instance's self-hosted Honcho MCP server instead of the hosted one", async () => {
+    vi.stubEnv("PAPERCLIP_HONCHO_MCP_URL", "https://honcho.self-hosted.test/mcp");
+    const company = await createCompany(db);
+    const service = createTestToolAccessService(db);
+    const fetchSpy = mockToolsList([{ name: "search", annotations: { readOnlyHint: true }, inputSchema: { type: "object", properties: { workspace_id: { type: "string" } } } }]);
+    const connected = await service.connectGalleryApp(company.id, { galleryKey: "honcho", credentialValues: { "credentials.authorization": "self-hosted-key" }, configValues: { workspaceId: "fixture-workspace" } });
+    expect(connected.connection.config).toMatchObject({ url: "https://honcho.self-hosted.test/mcp", sourceTemplateKey: "honcho" });
+    const urls = fetchSpy.mock.calls.map(([url]) => String(url));
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.every((url) => url === "https://honcho.self-hosted.test/mcp")).toBe(true);
+  });
+
+  it("reaches a self-hosted Honcho on a private address only when the instance allowlists its origin", async () => {
+    const service = createTestToolAccessService(db, {
+      deploymentMode: "authenticated", deploymentExposure: "public",
+      remoteHttpEndpointLookup: async () => [{ address: "10.10.0.1", family: 4 }],
+    });
+    mockToolsList([{ name: "search", annotations: { readOnlyHint: true }, inputSchema: { type: "object", properties: {} } }]);
+    const input = { galleryKey: "honcho", credentialValues: { "credentials.authorization": "self-hosted-key" }, configValues: { workspaceId: "fixture-workspace" } };
+    const connect = async () => service.connectGalleryApp((await createCompany(db)).id, input);
+    vi.stubEnv("PAPERCLIP_HONCHO_MCP_URL", "https://honcho.private.test/mcp");
+    await expect(connect()).rejects.toThrow(/private or reserved network/);
+    // Plain HTTP over a private link is accepted only for an exact allowlisted origin.
+    vi.stubEnv("PAPERCLIP_HONCHO_MCP_URL", "http://honcho.private.test:3000/mcp");
+    await expect(connect()).rejects.toThrow(/must use HTTPS/);
+    vi.stubEnv("PAPERCLIP_MCP_PRIVATE_ENDPOINT_ALLOWLIST", "http://honcho.private.test:3001");
+    await expect(connect()).rejects.toThrow(/must use HTTPS/);
+    vi.stubEnv("PAPERCLIP_MCP_PRIVATE_ENDPOINT_ALLOWLIST", "http://honcho.private.test:3000");
+    const connected = await connect();
+    expect(connected.connection.config).toMatchObject({ url: "http://honcho.private.test:3000/mcp", sourceTemplateKey: "honcho" });
+  });
+
   it("preserves custom instructions and opt-outs through OAuth draft recovery and reconnect", async () => {
     const company = await createCompany(db);
     const service = createTestToolAccessService(db);
