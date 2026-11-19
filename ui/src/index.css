@@ -5688,6 +5688,8 @@ html:has(.design-proposal-theme) .agent-markdown-name-field [data-slot="input"],
 .org-chart-agent-card[data-leader="true"] .org-card-character { padding: calc(var(--spacing) * 2) var(--org-card-inset); }
 .org-card-character { min-width: 0; min-height: 0; }
 .org-card-avatar[data-slot="agent-avatar"] { width: 100%; height: 100%; min-height: 0; }
+.org-card-human-avatar[data-slot="avatar"] { width: auto; height: 100%; max-width: 100%; aspect-ratio: 1; flex-shrink: 1; }
+.org-chart-agent-card[data-org-kind="user"] .org-card-name { padding-inline-end: 0; }
 .org-card-live-character { width: var(--org-leader-character-scale); height: var(--org-leader-character-scale); min-width: 0; min-height: 0; }
 .org-card-live-character > [data-slot="agent-avatar"] { width: 100%; height: 100%; }
 .org-card-model { font-size: var(--text-xs); line-height: var(--text-xs--line-height); }

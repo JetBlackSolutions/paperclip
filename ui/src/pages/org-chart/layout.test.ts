@@ -5,7 +5,7 @@ const geometry: ChartGeometry = { leaderWidth: 280, leaderHeight: 368, managerWi
 const node = (id: string, reports: OrgNode[] = []): OrgNode => ({ id, name: id, role: "general", status: "idle", reports });
 function flatten(roots: LayoutNode[]): LayoutNode[] { return roots.flatMap(root => [root, ...flatten(root.children)]); }
 describe("compact organization layout", () => {
-  it("wraps broad teams, cascades leaders, and keeps every card separate", () => {
+  it("stacks broad teams, cascades leaders, and keeps every card separate", () => {
     const tree = [node("ceo", [node("cto", Array.from({ length: 12 }, (_, i) => node(`eng-${i}`))), node("cmo", Array.from({ length: 4 }, (_, i) => node(`mkt-${i}`))), node("staff")])];
     for (const viewport of [{ width: 1500, height: 900 }, { width: 390, height: 750 }]) {
       const result = layoutOrganization(tree, viewport, geometry);
@@ -22,7 +22,7 @@ describe("compact organization layout", () => {
       expect(result.height * scale).toBeGreaterThan(viewport.height * 0.65);
     }
   });
-  it("keeps a mixed team's ICs beside its leaders", () => {
+  it("stacks all direct reports in one indented column, including mixed teams", () => {
     const tree = [node("ceo", [
       node("cto", Array.from({ length: 12 }, (_, i) => node(`eng-${i}`))),
       node("cmo", Array.from({ length: 4 }, (_, i) => node(`mkt-${i}`))),
@@ -31,7 +31,13 @@ describe("compact organization layout", () => {
     const result = layoutOrganization(tree, { width: 1500, height: 900 }, geometry);
     const nodes = flatten(result.roots);
     const cto = nodes.find(n => n.id === "cto")!;
-    expect(nodes.find(n => n.id === "staff-0")!.y).toBe(cto.y);
+    const parent = result.roots[0];
+    expect(new Set(parent.children.map(child => child.x)).size).toBe(1);
+    expect(cto.x).toBeGreaterThan(parent.x);
+    for (let i = 1; i < parent.children.length; i++) {
+      const prior = flatten([parent.children[i - 1]]);
+      expect(parent.children[i].y).toBeGreaterThan(Math.max(...prior.map(n => n.y + n.height)));
+    }
     for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
       const a = nodes[i], b = nodes[j];
       const aBottom = a.y + a.height;
@@ -104,4 +110,11 @@ describe("compact organization layout", () => {
 it("preserves human profile photos through layout", () => {
   const result = layoutOrganization([{ ...node("human"), kind: "user", image: "/api/assets/photo/content" }], { width: 800, height: 600 }, geometry);
   expect(result.roots[0]).toMatchObject({ kind: "user", image: "/api/assets/photo/content" });
+});
+
+it("gives humans the same card tier as department heads even without reports", () => {
+  const result = layoutOrganization([{ ...node("owner", [{ ...node("person"), kind: "user" }, node("lead", [node("bot")])]), kind: "user" }], { width: 1500, height: 900 }, geometry);
+  const nodes = new Map(flatten(result.roots).map(n => [n.id, n]));
+  expect(nodes.get("owner")).toMatchObject({ tier: 1, width: geometry.leaderWidth, height: geometry.leaderHeight });
+  expect(nodes.get("person")).toMatchObject({ tier: 2, width: geometry.managerWidth, height: geometry.managerHeight });
 });
