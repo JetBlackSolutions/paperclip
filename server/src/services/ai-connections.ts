@@ -823,8 +823,18 @@ export function aiConnectionService(db: Db) {
               ),
             ),
           ),
-        );
+        )
+        // Connection removal locks this row before counting remaining accounts.
+        // Keep the same lock order so a concurrent remove cannot hide this save.
+        .for("update");
       if (!app) throw unprocessable("Could not find the provider application");
+      // The last removal archives this row. Reusing it must also make the new
+      // account visible in Connectors, without restoring any revoked grants.
+      if (app.status === "archived")
+        await tx
+          .update(toolApplications)
+          .set({ status: "active", archivedAt: null, updatedAt: new Date() })
+          .where(and(eq(toolApplications.id, app.id), eq(toolApplications.companyId, companyId)));
       if (reconnect)
         await tx
           .update(toolConnections)
