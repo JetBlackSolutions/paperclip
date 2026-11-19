@@ -4493,10 +4493,19 @@ export function accessRoutes(
       await assertCompanyPermission(req, companyId, "users:manage_permissions");
       const memberToUpdate = await access.getMemberById(companyId, memberId);
       if (!memberToUpdate) throw notFound("Member not found");
-      await assertCanManageCompanyMember(req, access, companyId, memberToUpdate);
-
       const staffProfile = req.body.staffProfile;
-      const updated = await access.updateMember(companyId, memberId, req.body, {
+      // Reporting lines are not access roles. The Members form also sends the
+      // unchanged role/status, so compare values rather than field presence.
+      const profileOnlyUpdate = req.actor.type === "board"
+        && memberToUpdate.principalType === "user"
+        && staffProfile !== undefined
+        && (req.body.membershipRole === undefined || req.body.membershipRole === memberToUpdate.membershipRole)
+        && (req.body.status === undefined || req.body.status === memberToUpdate.status);
+      if (!profileOnlyUpdate) {
+        await assertCanManageCompanyMember(req, access, companyId, memberToUpdate);
+      }
+
+      const updated = await access.updateMember(companyId, memberId, profileOnlyUpdate ? {} : req.body, {
         afterUpdate: staffProfile && memberToUpdate.principalType === "user"
           ? async (tx) => {
             await companyStaffProfileService(tx).upsertForMember(companyId, memberToUpdate.principalId, staffProfile);
