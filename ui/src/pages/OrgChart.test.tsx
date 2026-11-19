@@ -360,6 +360,20 @@ describe("OrgChart mobile gestures", () => {
     expect(cards[0].querySelector(".org-card-status")?.textContent).toBe("Idle");
   });
 
+  it("renders human cards with the full leadership layout and opens member details", async () => {
+    orgMock.mockResolvedValue([{ ...orgTree[0], id: "human", name: "Human lead", kind: "user", image: "/photo.png", reports: [] }]);
+    await renderOrgChart();
+    const card = container.querySelector<HTMLElement>("[data-org-kind=user]")!;
+    expect(card.dataset.tier).toBe("1");
+    expect(card.dataset.leader).toBe("true");
+    expect(card.querySelector(".org-card-badge-slot")).not.toBeNull();
+    expect(card.querySelector(".org-card-human-avatar[data-slot=avatar]")).not.toBeNull();
+    expect(card.querySelector(".org-card-model")?.textContent).toBe("Human member");
+    expect(card.querySelector(".org-card-star")).toBeNull();
+    await act(async () => card.click());
+    expect(navigateMock).toHaveBeenCalledWith("/company/settings/members?member=human");
+  });
+
   it("stars a leader without opening its overview, including keyboard activation", async () => {
     await renderOrgChart();
     const button = container.querySelector<HTMLButtonElement>('[aria-label="Star CEO"]')!;

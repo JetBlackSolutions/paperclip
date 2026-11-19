@@ -609,7 +609,7 @@ export function OrgChart({ orgTree: providedOrgTree, agents: providedAgents, mat
                 key={`${node.kind ?? "agent"}:${node.id}`}
                 data-org-card
                 data-org-kind={node.kind ?? "agent"}
-                data-leader={node.leader}
+                data-leader={node.tier !== 3}
                 data-tier={node.tier}
                 data-depth={node.depth}
                 data-filter-match={matchingAgentIds ? matchingAgentIds.has(node.id) : undefined}
@@ -632,7 +632,7 @@ export function OrgChart({ orgTree: providedOrgTree, agents: providedAgents, mat
                   e.stopPropagation();
                 }}
               >
-                {node.leader && !isUser && <div className="org-card-badge-slot" aria-hidden />}
+                {node.tier !== 3 && <div className="org-card-badge-slot" aria-hidden />}
                 <div className="org-card-heading min-w-0 text-left">
                   {node.leader && !isUser && (
                     <StarToggle
@@ -651,12 +651,12 @@ export function OrgChart({ orgTree: providedOrgTree, agents: providedAgents, mat
                   <div className="org-card-title line-clamp-2 text-muted-foreground" title={subtitle}>
                     {subtitle}
                   </div>
-                  {isUser && <div className="org-card-status truncate text-muted-foreground">Human member</div>}
+                  {isUser && <div className="org-card-status truncate text-muted-foreground">{statusLabel}</div>}
                   {node.leader && !isUser && <div className="org-card-status truncate text-muted-foreground">{statusLabel}</div>}
                 </div>
                 <div className="org-card-character flex min-h-0 items-center justify-center">
                   {isUser ? (
-                    <Avatar className="org-card-avatar">
+                    <Avatar className="org-card-avatar org-card-human-avatar">
                       {node.image && <AvatarImage src={node.image} alt={node.name} />}
                       <AvatarFallback><User className="size-16 text-foreground/70" aria-hidden /></AvatarFallback>
                     </Avatar>
@@ -666,6 +666,7 @@ export function OrgChart({ orgTree: providedOrgTree, agents: providedAgents, mat
                     <AgentAvatar agent={agent ?? { id: node.id, name: node.name }} size={128} pose="rest" view="portrait" className="org-card-avatar" />
                   )}
                 </div>
+                {isUser && <div className="org-card-model text-muted-foreground">Human member</div>}
                 {adapterType && (modelLabel || effort) && (
                   <div className="org-card-model min-w-0">
                     {modelLabel && (
