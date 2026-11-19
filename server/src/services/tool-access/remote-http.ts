@@ -4,6 +4,7 @@ import type { DeploymentExposure, DeploymentMode } from "@paperclipai/shared";
 import { badRequest, HttpError } from "../../errors.js";
 import { assertPublicRemoteHttpEndpoint, parseRemoteHttpEndpoint, type RemoteHttpEndpointLookup } from "../remote-http-endpoint-guard.js";
 import { guardedRemoteHttpFetch, type GuardedRemoteHttpFetchOptions } from "../remote-http-fetch.js";
+import { mcpPrivateEndpointAllowlist } from "./private-endpoints.js";
 
 const REMOTE_HTTP_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
@@ -32,6 +33,7 @@ export function createToolRemoteHttp(options: RemoteHttpOptions) {
       endpoint,
       {
         allowPrivateNetwork: allowPrivateRemoteEndpoints(),
+        privateEndpointAllowlist: mcpPrivateEndpointAllowlist(),
         lookup: options.remoteHttpEndpointLookup,
       },
       (message, code) => badRequest(message, { code }),
@@ -42,6 +44,7 @@ export function createToolRemoteHttp(options: RemoteHttpOptions) {
   function remoteHttpFetchOptions(): GuardedRemoteHttpFetchOptions {
     return {
       allowPrivateNetwork: allowPrivateRemoteEndpoints(),
+      privateEndpointAllowlist: mcpPrivateEndpointAllowlist(),
       lookup: options.remoteHttpEndpointLookup,
       error: (message, code) => badRequest(message, { code }),
     };

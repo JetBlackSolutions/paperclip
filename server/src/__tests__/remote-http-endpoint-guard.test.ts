@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertPublicRemoteHttpEndpoint } from "../services/remote-http-endpoint-guard.js";
+import { assertPublicRemoteHttpEndpoint, parsePrivateEndpointAllowlist } from "../services/remote-http-endpoint-guard.js";
 import { readRemoteConnectionFailure } from "../services/remote-connection-failure.js";
 
 function guardError(message: string, code: string) {
@@ -32,6 +32,26 @@ describe("remote HTTP endpoint guard", () => {
     await expect(assertPublicRemoteHttpEndpoint(
       new URL("https://metadata.example/mcp"),
       { lookup: async () => [{ address: "10.0.0.12", family: 4 }] },
+      guardError,
+    )).rejects.toMatchObject({ code: "remote_http_private_endpoint" });
+  });
+
+  it("lets an exact allowlisted origin reach a private address, and no other origin", async () => {
+    const allowlist = parsePrivateEndpointAllowlist(
+      "http://10.10.0.1:3000, not-a-url, http://10.10.0.1:3000/path, https://user@10.0.0.9, ftp://10.0.0.8",
+    );
+    expect([...allowlist]).toEqual(["http://10.10.0.1:3000"]);
+    await expect(assertPublicRemoteHttpEndpoint(
+      new URL("http://10.10.0.1:3000/mcp"), { privateEndpointAllowlist: allowlist }, guardError,
+    )).resolves.toBeUndefined();
+    for (const other of ["http://10.10.0.1:3001/mcp", "https://10.10.0.1:3000/mcp", "http://10.10.0.2:3000/mcp"]) {
+      await expect(assertPublicRemoteHttpEndpoint(
+        new URL(other), { privateEndpointAllowlist: allowlist }, guardError,
+      )).rejects.toMatchObject({ code: "remote_http_private_endpoint" });
+    }
+    await expect(assertPublicRemoteHttpEndpoint(
+      new URL("http://169.254.169.254/latest"),
+      { privateEndpointAllowlist: parsePrivateEndpointAllowlist("http://169.254.169.254") },
       guardError,
     )).rejects.toMatchObject({ code: "remote_http_private_endpoint" });
   });

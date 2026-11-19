@@ -255,6 +255,26 @@ describe("guarded remote HTTP fetch (PAP-17098 DNS rebinding)", () => {
     expect(internal.requests).toHaveLength(0);
   });
 
+  it("reaches an allowlisted private origin through the pinned connection, and only that origin", async () => {
+    const internal = await startServer();
+    const network = routingSocketFactory({ "10.10.0.1": internal.port });
+    const options = {
+      allowPrivateNetwork: false,
+      privateEndpointAllowlist: new Set(["http://honcho.private.test:3000"]),
+      lookup: async () => [{ address: "10.10.0.1", family: 4 }],
+      socketFactory: network.factory,
+      error: guardError,
+    };
+
+    const response = await guardedRemoteHttpFetch("http://honcho.private.test:3000/mcp", {}, options);
+    expect(response.status).toBe(200);
+    expect(internal.requests).toEqual([{ url: "/mcp", host: "honcho.private.test:3000" }]);
+
+    await expect(guardedRemoteHttpFetch("http://honcho.private.test:3001/mcp", {}, options))
+      .rejects.toMatchObject({ code: "remote_http_private_endpoint" });
+    expect(internal.requests).toHaveLength(1);
+  });
+
   it("rejects a hostname whose only resolution is link-local metadata", async () => {
     const internal = await startServer();
     const network = routingSocketFactory({ "169.254.169.254": internal.port });

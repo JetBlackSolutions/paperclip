@@ -1,6 +1,25 @@
 import { describe, expect, it, vi } from "vitest";
+import { getConnectableAppDefinition } from "@paperclipai/shared";
 import { classifyRisk } from "../services/tool-access.js";
 import { COGNEE_STDIO_TEMPLATE, cogneeCloudUrl, callCogneeCloud } from "../services/cognee-connection.js";
+import { appWithSelfHostedHoncho, selfHostedHonchoMcpUrl } from "../services/honcho-connection.js";
+
+describe("self-hosted Honcho", () => {
+  it("uses Honcho's hosted MCP server unless the instance names its own", () => {
+    const honcho = getConnectableAppDefinition("honcho")!;
+    expect(selfHostedHonchoMcpUrl("")).toBeNull();
+    expect(appWithSelfHostedHoncho(honcho, null)).toBe(honcho);
+    const selfHosted = appWithSelfHostedHoncho(honcho, selfHostedHonchoMcpUrl(" http://10.10.0.1:3000/mcp "));
+    expect(selfHosted.methods.map((method) => method.defaults?.serverUrl)).toEqual(["http://10.10.0.1:3000/mcp"]);
+    expect(honcho.methods[0]!.defaults?.serverUrl).toBe("https://mcp.honcho.dev");
+    const mem0 = getConnectableAppDefinition("mem0")!;
+    expect(appWithSelfHostedHoncho(mem0, "http://10.10.0.1:3000/mcp")).toBe(mem0);
+  });
+
+  it.each(["not a url", "ftp://10.10.0.1/mcp", "http://user:secret@10.10.0.1:3000/mcp"])("rejects an unusable self-hosted Honcho URL: %s", (value) => {
+    expect(() => selfHostedHonchoMcpUrl(value)).toThrow(/PAPERCLIP_HONCHO_MCP_URL/);
+  });
+});
 
 describe("memory tool governance", () => {
   it.each([

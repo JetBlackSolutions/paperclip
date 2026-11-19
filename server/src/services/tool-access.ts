@@ -148,6 +148,7 @@ import { gmailArchiveToolDescription } from "./gmail-archive-tool-policy.js";
 import { createToolRuntimeSupervisor } from "./tool-runtime-supervisor.js";
 
 import { appWithPaperclipCloudConnectorAvailability, paperclipCloudConnectorCapabilitiesFromEnv, createPaperclipCloudConnector, isPaperclipCloudConnectorStrategy, paperclipCloudConnectorConfigFromEnv, type PaperclipCloudConnector } from "./paperclip-cloud-connector.js";
+import { appWithSelfHostedHoncho } from "./honcho-connection.js";
 import { createVercelConnectClient, deriveVercelConnectSubject, vercelConnectIntegrationStatus, type VercelConnectClient } from "./vercel-connect.js";
 
 type ToolAccessServiceOptions = {
@@ -768,7 +769,8 @@ export function toolAccessService(
       : null;
     return cachedCloudConnector;
   };
-  async function appForConnectionSetup(app: AppDefinition): Promise<AppDefinition> {
+  async function appForConnectionSetup(catalogApp: AppDefinition): Promise<AppDefinition> {
+    const app = appWithSelfHostedHoncho(catalogApp);
     if (!app.methods.some((method) => isPaperclipCloudConnectorStrategy(method.oauthStrategy))) {
       return app;
     }
@@ -3785,7 +3787,8 @@ export function toolAccessService(
     galleryKey: string,
     methodKey?: string | null,
   ): Promise<ToolAppMetadataPreflightResult> {
-    const app = getConnectableAppDefinition(galleryKey);
+    const catalogApp = getConnectableAppDefinition(galleryKey);
+    const app = catalogApp ? appWithSelfHostedHoncho(catalogApp) : null;
     if (!app || app.availability?.available === false)
       throw notFound("App not found");
     const method = connectionMethodFor(app, methodKey);
