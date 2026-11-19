@@ -5,14 +5,15 @@ const geometry: ChartGeometry = { leaderWidth: 280, leaderHeight: 368, managerWi
 const node = (id: string, reports: OrgNode[] = []): OrgNode => ({ id, name: id, role: "general", status: "idle", reports });
 function flatten(roots: LayoutNode[]): LayoutNode[] { return roots.flatMap(root => [root, ...flatten(root.children)]); }
 describe("compact organization layout", () => {
-  it("wraps broad teams, cascades leaders, and keeps every card separate", () => {
+  it("spreads broad teams, cascades leaders, and keeps every card separate", () => {
     const tree = [node("ceo", [node("cto", Array.from({ length: 12 }, (_, i) => node(`eng-${i}`))), node("cmo", Array.from({ length: 4 }, (_, i) => node(`mkt-${i}`))), node("staff")])];
     for (const viewport of [{ width: 1500, height: 900 }, { width: 390, height: 750 }]) {
       const result = layoutOrganization(tree, viewport, geometry);
       const nodes = flatten(result.roots);
       expect(nodes).toHaveLength(20);
-      expect(nodes[0].width).toBeGreaterThan(nodes[1].width);
-      expect(nodes[1].height).toBeGreaterThan(nodes[2].height);
+      const byId = new Map(nodes.map(n => [n.id, n]));
+      expect(byId.get("ceo")!.width).toBeGreaterThan(byId.get("cto")!.width);
+      expect(byId.get("cto")!.height).toBeGreaterThan(byId.get("eng-0")!.height);
       expect(new Set(nodes.filter(n => n.id.startsWith("eng-")).map(n => n.y)).size).toBeGreaterThan(1);
       for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
         const a = nodes[i], b = nodes[j];
@@ -39,7 +40,7 @@ describe("compact organization layout", () => {
       expect(a.x + a.width <= b.x || b.x + b.width <= a.x || aBottom <= b.y || bBottom <= a.y).toBe(true);
     }
   });
-  it("routes broad and stacked teams with separate orthogonal tracks outside cards", () => {
+  it("routes teams from a shared bus and stacked reports from a side rail, outside every card", () => {
     const tree = [node("ceo", [node("cmo", Array.from({ length: 4 }, (_, i) => node(`mkt-${i}`))), node("cto", Array.from({ length: 12 }, (_, i) => node(`eng-${i}`))), ...Array.from({ length: 4 }, (_, i) => node(`staff-${i}`))])];
     for (const viewport of [{ width: 1500, height: 900 }, { width: 390, height: 750 }]) {
       const result = layoutOrganization(tree, viewport, geometry);
@@ -57,16 +58,27 @@ describe("compact organization layout", () => {
           expect(inside, `Line crosses ${card.id}`).toBe(false);
         }
       }
-      for (let i = 0; i < segments.length; i++) for (let j = i + 1; j < segments.length; j++) {
-        const a = segments[i], b = segments[j];
-        const vertical = a.start.x === a.end.x && b.start.x === b.end.x;
-        const horizontal = a.start.y === a.end.y && b.start.y === b.end.y;
-        const overlap = vertical && a.start.x === b.start.x
-          ? Math.min(Math.max(a.start.y, a.end.y), Math.max(b.start.y, b.end.y)) > Math.max(Math.min(a.start.y, a.end.y), Math.min(b.start.y, b.end.y))
-          : horizontal && a.start.y === b.start.y && Math.min(Math.max(a.start.x, a.end.x), Math.max(b.start.x, b.end.x)) > Math.max(Math.min(a.start.x, a.end.x), Math.min(b.start.x, b.end.x));
-        expect(overlap, `Shared line segments ${i} and ${j}`).toBe(false);
+      for (const { child, points } of routes) {
+        const end = points.at(-1)!;
+        const entersTop = end.x === child.x + child.width / 2 && end.y === child.y;
+        const entersSide = end.x === child.x && end.y === child.y + child.height / 2;
+        expect(entersTop || entersSide, `Line to ${child.id} ends at a card edge`).toBe(true);
+      }
+      const ceo = nodes.find(n => n.id === "ceo")!;
+      const firstRow = Math.min(...ceo.children.map(child => child.y));
+      for (const team of ceo.children.filter(child => child.leader && child.y === firstRow)) {
+        expect(routes.find(route => route.child === team)!.points.at(-1)).toEqual({ x: team.x + team.width / 2, y: team.y });
       }
     }
+  });
+  it("stacks a lead's individual contributors in one indented column under it", () => {
+    const tree = [node("ceo", [node("lead", Array.from({ length: 5 }, (_, i) => node(`agent-${i}`))), node("other", [node("solo")])])];
+    const lead = flatten(layoutOrganization(tree, { width: 1500, height: 900 }, geometry).roots).find(n => n.id === "lead")!;
+    expect(new Set(lead.children.map(child => child.x))).toEqual(new Set([lead.x + geometry.gap]));
+    lead.children.forEach((child, i) => {
+      const above = i ? lead.children[i - 1] : lead;
+      expect(child.y).toBeGreaterThanOrEqual(above.y + above.height);
+    });
   });
   it("uses exactly three stable tiers, including deeper leads and root-level contributors", () => {
     const tree = [node("ceo", [node("cto", [node("team-lead", [node("engineer")])]), node("staff")]), node("independent")];
@@ -113,12 +125,12 @@ it("gives humans the same card tier as department heads even without reports", (
   expect(nodes.get("person")).toMatchObject({ tier: 2, width: geometry.managerWidth, height: geometry.managerHeight });
 });
 
-it("spreads a broad company's teams across the viewport instead of one tall column", () => {
+it("keeps a manager's teams in one row instead of one tall column", () => {
   // Shaped like a real 50-agent company: one owner over eight agent teams.
   const tree = [{ ...node("owner", Array.from({ length: 8 }, (_, t) =>
     node(`lead-${t}`, Array.from({ length: 5 }, (_, i) => node(`agent-${t}-${i}`))))), kind: "user" as const }];
   const result = layoutOrganization(tree, { width: 1500, height: 900 }, geometry);
-  expect(new Set(result.roots[0].children.map(team => team.y)).size).toBeLessThan(result.roots[0].children.length);
+  expect(new Set(result.roots[0].children.map(team => team.y)).size).toBe(1);
   expect(new Set(result.roots[0].children.map(team => team.x)).size).toBeGreaterThan(1);
   expect(result.height / result.width).toBeLessThan(3);
 });

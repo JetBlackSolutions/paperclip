@@ -82,34 +82,38 @@ export function layoutOrganization(roots: OrgNode[], viewport: { width: number; 
       const childBlocks = reports.map(child => build(child, depth + 1));
       const teams = childBlocks.filter(block => block.roots[0].leader);
       const members = childBlocks.filter(block => !block.roots[0].leader);
+      const card = (x: number, children: LayoutNode[]): LayoutNode => ({
+        id: node.id, kind: node.kind, image: node.image, title: node.title, name: node.name,
+        role: node.role, status: node.status, x, y: 0, width, height, depth, tier, leader, children,
+      });
+      // A lead's individual contributors read as a list: one column indented
+      // under the lead, joined by a rail in the gutter on its left. Teams sit
+      // side by side and wrap to the viewport, because stacking whole teams
+      // turned a 50-agent company into an unreadable sliver.
+      if (!teams.length && members.length) {
+        const column = pack(members, 1, g.gap);
+        column.roots.forEach(child => shift(child, g.gap, height + g.gap));
+        return {
+          roots: [card(0, column.roots)],
+          width: Math.max(width, g.gap + column.width),
+          height: height + g.gap + column.height,
+        };
+      }
       // A mixed leadership team keeps its individual contributors in a compact
       // side column, instead of placing them below the deepest reporting branch.
-      // Teams sit side by side and wrap to the viewport: stacking every report
-      // in one column turned a 50-agent company into an unreadable sliver.
+      // The column leads the row so it never wraps under a tall team, where its
+      // reporting line would have to run the length of that team.
       const branches = teams.length && members.length
-        ? [...teams, pack(members, 1, g.gap)]
+        ? [pack(members, 1, g.gap), ...teams]
         : childBlocks;
-      const children = pack(branches, columns, g.gap);
+      // Teams share one row under their manager, as in a conventional org chart:
+      // a wrapped team would sit under a sibling's subtree with a line running
+      // its full length. Only the top level wraps to fit the viewport.
+      const children = pack(branches, branches.length, g.gap);
       const blockWidth = Math.max(width, children.width);
       children.roots.forEach(child => shift(child, (blockWidth - children.width) / 2, height + g.levelGap));
       return {
-        roots: [{
-          id: node.id,
-          kind: node.kind,
-          image: node.image,
-          title: node.title,
-          name: node.name,
-          role: node.role,
-          status: node.status,
-          x: (blockWidth - width) / 2,
-          y: 0,
-          width,
-          height,
-          depth,
-          tier,
-          leader,
-          children: children.roots,
-        }],
+        roots: [card((blockWidth - width) / 2, children.roots)],
         width: blockWidth,
         height: height + (children.roots.length ? g.levelGap + children.height : 0),
       };
@@ -139,41 +143,36 @@ export interface ReportingRoute {
   path: string;
 }
 
-/** Give every relationship a separate port, horizontal track, and column lane. */
+/**
+ * Draw reporting lines as an org chart: teams in the first row below their
+ * manager hang from one shared bus and are entered from the top; stacked
+ * reports (a lead's list, a side column, or a wrapped row) hang from a rail in
+ * the gutter on their left and are entered from the side.
+ */
 export function routeReportingEdges(roots: LayoutNode[], gap: number): ReportingRoute[] {
   const routes: ReportingRoute[] = [];
   const visit = (parent: LayoutNode) => {
-    const columns = new Map<number, LayoutNode[]>();
-    for (const child of parent.children) {
-      const column = columns.get(child.x) ?? [];
-      column.push(child);
-      columns.set(child.x, column);
-    }
-    const lanes: Array<{ child: LayoutNode; x: number; port: number }> = [];
-    for (const column of columns.values()) {
-      column.sort((a, b) => a.y - b.y);
-      column.forEach((child, row) => lanes.push({
-        child, x: child.x - gap * (row + 1) / (column.length + 1), port: 0,
-      }));
-    }
-    lanes.sort((a, b) => a.x - b.x);
-    lanes.forEach((lane, index) => {
-      lane.port = parent.x + gap / 2 + (parent.width - gap) * (index + 1) / (lanes.length + 1);
-    });
-    const left = lanes.filter(lane => lane.x < lane.port);
-    const right = lanes.filter(lane => lane.x >= lane.port).reverse();
-    const tracks = [...left, ...right];
+    if (!parent.children.length) return;
+    const perColumn = new Map<number, number>();
+    for (const child of parent.children) perColumn.set(child.x, (perColumn.get(child.x) ?? 0) + 1);
     const bottom = parent.y + parent.height;
     const firstRow = Math.min(...parent.children.map(child => child.y));
-    tracks.forEach((lane, index) => {
-      const trackY = bottom + (firstRow - bottom) * (index + 1) / (tracks.length + 1);
-      const endY = lane.child.y + lane.child.height / 2;
-      const points = [
-        { x: lane.port, y: bottom }, { x: lane.port, y: trackY },
-        { x: lane.x, y: trackY }, { x: lane.x, y: endY }, { x: lane.child.x, y: endY },
-      ];
-      routes.push({ parent, child: lane.child, points, path: points.map((point, i) => `${i ? "L" : "M"} ${point.x} ${point.y}`).join(" ") });
-    });
+    const busY = bottom + (firstRow - bottom) / 2;
+    const center = parent.x + parent.width / 2;
+    for (const child of parent.children) {
+      let points: Array<{ x: number; y: number }>;
+      if (child.y === firstRow && perColumn.get(child.x) === 1) {
+        const top = child.x + child.width / 2;
+        points = [{ x: center, y: bottom }, { x: center, y: busY }, { x: top, y: busY }, { x: top, y: child.y }];
+      } else {
+        const rail = child.x - gap / 2;
+        const endY = child.y + child.height / 2;
+        points = rail > parent.x && rail < parent.x + parent.width
+          ? [{ x: rail, y: bottom }, { x: rail, y: endY }, { x: child.x, y: endY }]
+          : [{ x: center, y: bottom }, { x: center, y: busY }, { x: rail, y: busY }, { x: rail, y: endY }, { x: child.x, y: endY }];
+      }
+      routes.push({ parent, child, points, path: points.map((point, i) => `${i ? "L" : "M"} ${point.x} ${point.y}`).join(" ") });
+    }
     parent.children.forEach(visit);
   };
   roots.forEach(visit);
