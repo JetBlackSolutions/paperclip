@@ -1,3 +1,4 @@
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { Link, useNavigate } from "@/lib/router";
@@ -32,6 +33,7 @@ const TOUCH_MOVE_THRESHOLD = 6;
 interface LayoutNode {
   id: string;
   kind?: OrgNode["kind"];
+  image?: string | null;
   title?: string | null;
   name: string;
   role: string;
@@ -86,6 +88,7 @@ function layoutTree(node: OrgNode, x: number, y: number): LayoutNode {
   return {
     id: node.id,
     kind: node.kind,
+    image: node.image,
     title: node.title,
     name: node.name,
     role: node.role,
@@ -598,7 +601,7 @@ export function OrgChart() {
             const dotColor = isUser ? "var(--primary)" : (statusDotColor[node.status] ?? defaultDotColor);
             const openNode = () => {
               if (isUser) {
-                navigate("/company/settings/members");
+                navigate(`/company/settings/members?member=${encodeURIComponent(node.id)}`);
                 return;
               }
               navigate(agent ? agentUrl(agent) : `/agents/${node.id}`);
@@ -629,7 +632,10 @@ export function OrgChart() {
                   <div className="relative shrink-0">
                     <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center">
                       {isUser ? (
-                        <User className="h-4.5 w-4.5 text-foreground/70" aria-hidden />
+                        <Avatar size="sm">
+                          {node.image && <AvatarImage src={node.image} alt={node.name} />}
+                          <AvatarFallback><User className="size-4 text-foreground/70" aria-hidden /></AvatarFallback>
+                        </Avatar>
                       ) : (
                         <AgentAvatar agent={agent} size={16} className="h-4.5 w-4.5 text-foreground/70"/>
                       )}

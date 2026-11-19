@@ -1,3 +1,4 @@
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { AdapterMark } from "@/components/AdapterMark";
 import { models as claudeModels } from "@paperclipai/adapter-claude-local";
 import { models as codexModels } from "@paperclipai/adapter-codex-local";
@@ -596,7 +597,7 @@ export function OrgChart({ orgTree: providedOrgTree, agents: providedAgents, mat
             const starPending = membershipMutation.isPending && membershipMutation.variables?.resourceId === node.id;
             const openAgent = () => {
               if (isUser) {
-                navigate("/company/settings/members");
+                navigate(`/company/settings/members?member=${encodeURIComponent(node.id)}`);
                 return;
               }
               navigate(agent ? agentUrl(agent) : `/agents/${node.id}`);
@@ -655,9 +656,10 @@ export function OrgChart({ orgTree: providedOrgTree, agents: providedAgents, mat
                 </div>
                 <div className="org-card-character flex min-h-0 items-center justify-center">
                   {isUser ? (
-                    <div className="org-card-avatar flex items-center justify-center rounded-full bg-muted">
-                      <User className="size-16 text-foreground/70" aria-hidden />
-                    </div>
+                    <Avatar className="org-card-avatar">
+                      {node.image && <AvatarImage src={node.image} alt={node.name} />}
+                      <AvatarFallback><User className="size-16 text-foreground/70" aria-hidden /></AvatarFallback>
+                    </Avatar>
                   ) : node.leader ? (
                     <AgentCharacter agent={agent ?? { id: node.id, name: node.name }} size={256} state="idle" trackingScope="page" followCursor animationGroup="org-chart" className="org-card-live-character" />
                   ) : (

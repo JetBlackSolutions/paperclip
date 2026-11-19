@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentReportingManager, invalidManagerIds } from "./AgentReportingManager";
 import { queryKeys } from "@/lib/queryKeys";
 
-const api = vi.hoisted(() => ({ list: vi.fn(), update: vi.fn() }));
+const api = vi.hoisted(() => ({ list: vi.fn(), org: vi.fn(), update: vi.fn() }));
 vi.mock("@/api/agents", () => ({ agentsApi: api }));
 vi.mock("@/lib/router", () => ({ Link: ({ to, children, ...props }: any) => <a href={to} {...props}>{children}</a> }));
 
@@ -22,6 +22,9 @@ async function mount(value = directory[0]) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } });
   client.setQueryData(queryKeys.agents.list("company"), directory);
   api.list.mockResolvedValue(directory);
+  const tree = [{ id: "human", kind: "user", name: "Human lead", role: "manager", status: "active", reports: [] }];
+  client.setQueryData(queryKeys.org("company"), tree);
+  api.org.mockResolvedValue(tree);
   await act(() => root!.render(<QueryClientProvider client={client}><AgentReportingManager agent={value} /></QueryClientProvider>));
   return client;
 }
@@ -40,7 +43,7 @@ describe("Agent reporting manager", () => {
     expect(buttons.filter(button => button.disabled)).toHaveLength(3);
     await act(() => buttons.find(button => button.textContent?.startsWith("Morgan"))!.click());
     await flush();
-    expect(api.update).toHaveBeenCalledWith("Alex", { reportsTo: "Morgan" }, "company");
+    expect(api.update).toHaveBeenCalledWith("Alex", { reportsTo: "Morgan", reportsToUserId: null }, "company");
   });
   it("keeps the cached manager and picker available after a transient directory failure", async () => {
     const client = await mount({ ...directory[0], reportsTo: "Morgan" });
@@ -58,8 +61,23 @@ describe("Agent reporting manager", () => {
     await act(() => (host.querySelector('[aria-label="Change manager"]') as HTMLButtonElement).click());
     const clear = Array.from(document.querySelectorAll('[data-slot="popover-content"] button')).find(button => button.textContent === "No manager") as HTMLButtonElement;
     await act(() => clear.click()); await flush(); await flush();
-    expect(api.update).toHaveBeenCalledWith("Alex", { reportsTo: null }, "company");
+    expect(api.update).toHaveBeenCalledWith("Alex", { reportsTo: null, reportsToUserId: null }, "company");
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("Could not save manager");
     expect(host.querySelector("a")?.textContent).toBe("Morgan");
   });
+});
+
+it("saves human managers with an exclusive typed relationship", async () => {
+  api.update.mockResolvedValue({ ...directory[0], reportsTo: null, reportsToUserId: "human" });
+  await mount();
+  await act(() => (host.querySelector('[aria-label="Choose manager"]') as HTMLButtonElement).click());
+  const button = Array.from(document.querySelectorAll('[data-slot="popover-content"] button')).find(button => button.textContent?.includes("Human lead")) as HTMLButtonElement;
+  await act(() => button.click()); await flush();
+  expect(api.update).toHaveBeenCalledWith("Alex", { reportsTo: null, reportsToUserId: "human" }, "company");
+});
+it("displays a saved human manager rather than No manager", async () => {
+  await mount({ ...directory[0], reportsTo: null, reportsToUserId: "human" });
+  expect(host.querySelector("a")?.textContent).toContain("Human lead");
+  expect(host.querySelector("a")?.getAttribute("href")).toBe("/company/settings/members?member=human");
+  expect(host.textContent).not.toContain("No manager");
 });

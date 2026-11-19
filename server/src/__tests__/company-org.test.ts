@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
+import express from "express";
+import request from "supertest";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { eq } from "drizzle-orm";
 import { agents, authUsers, companyMemberships, companies, createDb, type Db } from "@paperclipai/db";
 import { createAgentSchema, sendChatMessageSchema } from "@paperclipai/shared";
+import { agentRoutes } from "../routes/agents.js";
 import { accessService } from "../services/access.js";
 import { assertAgentReportsToPrincipal, hybridOrgForCompany } from "../services/company-org.js";
 import { assertHybridReportingAcyclic } from "../services/company-reporting-graph.js";
@@ -25,7 +28,7 @@ describe("company org and staff", () => {
   it("builds a hybrid org chart with humans and agents", async () => {
     const [company] = await db.insert(companies).values({ name: "Acorn", issuePrefix: "ACORN" }).returning();
     const now = new Date();
-    const [humanCeo] = await db.insert(authUsers).values({ id: "ceo-user", email: "ceo@example.com", name: "Avery", createdAt: now, updatedAt: now }).returning();
+    const [humanCeo] = await db.insert(authUsers).values({ id: "ceo-user", email: "ceo@example.com", name: "Avery", image: "https://example.com/avery.png", createdAt: now, updatedAt: now }).returning();
     const [humanOps] = await db.insert(authUsers).values({ id: "ops-user", email: "ops@example.com", name: "Riley", createdAt: now, updatedAt: now }).returning();
     await db.insert(companyMemberships).values([
       { companyId: company!.id, principalType: "user", principalId: humanCeo!.id, status: "active", membershipRole: "owner" },
@@ -50,7 +53,7 @@ describe("company org and staff", () => {
 
     const tree = await hybridOrgForCompany(db, company!.id);
     const ceo = tree.find((node) => node.kind === "user" && node.id === humanCeo!.id);
-    expect(ceo).toMatchObject({ name: "Avery", role: "ceo", title: "Chief Executive" });
+    expect(ceo).toMatchObject({ name: "Avery", role: "ceo", title: "Chief Executive", image: "https://example.com/avery.png" });
     expect(ceo?.reports.some((node) => node.kind === "user" && node.id === humanOps!.id)).toBe(true);
     expect(ceo?.reports.some((node) => node.kind === "agent" && node.id === agentCoo!.id)).toBe(true);
     const coo = ceo?.reports.find((node) => node.kind === "agent" && node.id === agentCoo!.id);
@@ -217,5 +220,32 @@ describe("company org and staff", () => {
     await db.insert(companyMemberships).values({ companyId: company!.id, principalType: "user", principalId: human!.id, status: "suspended", membershipRole: "operator" });
     const tree = await hybridOrgForCompany(db, company!.id);
     expect(tree.some((node) => node.kind === "user" && node.id === human!.id)).toBe(false);
+  });
+
+  it("returns human profile photos from the org API", async () => {
+    const [company] = await db.insert(companies).values({ name: "Birch", issuePrefix: "BIRCH" }).returning();
+    const now = new Date();
+    const [lead] = await db.insert(authUsers).values({ id: "photo-lead", email: "lead@example.com", name: "Quinn", image: "https://example.com/quinn.png", createdAt: now, updatedAt: now }).returning();
+    const [peer] = await db.insert(authUsers).values({ id: "photo-peer", email: "peer@example.com", name: "Sage", createdAt: now, updatedAt: now }).returning();
+    await db.insert(companyMemberships).values([
+      { companyId: company!.id, principalType: "user", principalId: lead!.id, status: "active", membershipRole: "owner" },
+      { companyId: company!.id, principalType: "user", principalId: peer!.id, status: "active", membershipRole: "member" },
+    ]);
+    const [agent] = await db.insert(agents).values({
+      companyId: company!.id, name: "Rowan", role: "engineer", adapterType: "process", reportsToUserId: lead!.id,
+    }).returning();
+    const app = express();
+    app.use((req, _res, next) => { req.actor = { type: "board", source: "local_implicit", userId: lead!.id, companyIds: [company!.id] }; next(); });
+    app.use("/api", agentRoutes(db));
+
+    const response = await request(app).get(`/api/companies/${company!.id}/org`);
+
+    expect(response.status).toBe(200);
+    type OrgResponseNode = { id: string; kind: string; image?: string | null; reports: OrgResponseNode[] };
+    const flatten = (nodes: OrgResponseNode[]): OrgResponseNode[] => nodes.flatMap((node) => [node, ...flatten(node.reports)]);
+    const nodes = flatten(response.body as OrgResponseNode[]);
+    expect(nodes.find((node) => node.kind === "user" && node.id === lead!.id)?.image).toBe("https://example.com/quinn.png");
+    expect(nodes.find((node) => node.kind === "user" && node.id === peer!.id)).toHaveProperty("image", null);
+    expect(nodes.find((node) => node.kind === "agent" && node.id === agent!.id)).not.toHaveProperty("image");
   });
 });

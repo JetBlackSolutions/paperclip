@@ -329,6 +329,31 @@ describe("CompanyAccess", () => {
     });
   });
 
+  it("opens a human org deep link and saves another human as manager", async () => {
+    mockSearchParamsState.current = new URLSearchParams("member=user-1");
+    const root = createRoot(container);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    await act(async () => root.render(<QueryClientProvider client={queryClient}><CompanyAccess /></QueryClientProvider>));
+    await flushReact();
+    await flushReact();
+    const select = Array.from(document.body.querySelectorAll("select")).find((element) =>
+      Array.from(element.options).some((option) => option.value === "user:user-2"),
+    );
+    expect(select).toBeTruthy();
+    expect(mockSearchParamsState.current.has("member")).toBe(false);
+    await act(async () => {
+      select!.value = "user:user-2";
+      select!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const save = Array.from(document.body.querySelectorAll("button")).find((button) => button.textContent === "Save member");
+    await act(async () => save!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flushReact();
+    expect(updateMemberMock).toHaveBeenCalledWith("company-1", "member-1", expect.objectContaining({
+      staffProfile: expect.objectContaining({ reportsTo: { type: "user", id: "user-2" } }),
+    }));
+    await act(async () => root.unmount());
+  });
+
   it("builds reports-to options for a large company within a bounded comparison budget", async () => {
     const agentCount = 400;
     const memberCount = 300;

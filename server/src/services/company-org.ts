@@ -57,6 +57,7 @@ export async function hybridOrgForCompany(db: Db, companyId: string): Promise<Hy
   const flattened: Array<{
     id: string;
     kind: "agent" | "user";
+    image?: string | null;
     name: string;
     role: string;
     title: string | null;
@@ -93,6 +94,7 @@ export async function hybridOrgForCompany(db: Db, companyId: string): Promise<Hy
       id: human.userId,
       kind: "user",
       name: human.displayName,
+      image: human.image,
       role: profile?.orgRole?.trim() || human.membershipRole || "member",
       title: profile?.jobTitle ?? null,
       status: human.status,
@@ -105,6 +107,7 @@ export async function hybridOrgForCompany(db: Db, companyId: string): Promise<Hy
     (node, reports) => ({
       id: node.id.slice(node.kind.length + 1),
       kind: node.kind,
+      ...(node.kind === "user" ? { image: node.image ?? null } : {}),
       name: node.name,
       role: node.role,
       title: node.title,

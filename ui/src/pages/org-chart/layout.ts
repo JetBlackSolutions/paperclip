@@ -10,6 +10,7 @@ export interface ChartGeometry {
 export interface LayoutNode {
   id: string;
   kind?: OrgNode["kind"];
+  image?: string | null;
   title?: string | null;
   name: string;
   role: string;
@@ -93,6 +94,7 @@ export function layoutOrganization(roots: OrgNode[], viewport: { width: number; 
         roots: [{
           id: node.id,
           kind: node.kind,
+          image: node.image,
           title: node.title,
           name: node.name,
           role: node.role,

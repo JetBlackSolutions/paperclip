@@ -1,3 +1,4 @@
+import { humanReportingOptions } from "@/lib/human-reporting";
 import { environmentSupportsLoginPty } from "@paperclipai/shared";
 import { matchesAdapterLoginTarget, useAdapterLoginCancellation } from "./useAdapterLoginCancellation";
 import { ACCOUNT_BOUND_MODEL_DISCOVERY_QUERY_OPTIONS, isAccountBoundAcpxAgent } from "@/lib/native-model-catalog";
@@ -1106,6 +1107,13 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     enabled: Boolean(!isCreate && selectedCompanyId),
   });
 
+  const companyOrg = useQuery({
+    queryKey: queryKeys.org(selectedCompanyId ?? "none"),
+    queryFn: () => agentsApi.org(selectedCompanyId!),
+    enabled: Boolean(!isCreate && selectedCompanyId),
+  });
+  const reportingOptions = humanReportingOptions(companyOrg.data ?? [], isCreate ? "" : props.agent.id);
+
   /** Props passed to adapter-specific config field components */
   const adapterFieldProps = {
     companyId: selectedCompanyId ?? undefined,
@@ -1704,7 +1712,13 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               <ReportsToPicker
                 agents={companyAgents}
                 value={eff("identity", "reportsTo", props.agent.reportsTo ?? null)}
-                onChange={(id) => mark("identity", "reportsTo", id)}
+                onChange={(id) => { mark("identity", "reportsTo", id); mark("identity", "reportsToUserId", null); }}
+                humans={reportingOptions.humans}
+                humanValue={eff("identity", "reportsToUserId", props.agent.reportsToUserId ?? null)}
+                onHumanChange={(id) => { mark("identity", "reportsToUserId", id); mark("identity", "reportsTo", null); }}
+                disabled={!companyOrg.data}
+                disabledAgentIds={reportingOptions.blockedAgents}
+                disabledHumanIds={reportingOptions.blockedHumans}
                 excludeAgentIds={[props.agent.id]}
                 chooseLabel="Choose manager…"
               />

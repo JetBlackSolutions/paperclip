@@ -3065,6 +3065,8 @@ export function agentRoutes(
     return {
       id: String(node.id),
       kind: node.kind === "user" ? "user" : "agent",
+      // Human nodes carry their account photo; the org chart and manager pickers render it.
+      ...(node.kind === "user" ? { image: typeof node.image === "string" && node.image ? node.image : null } : {}),
       name: String(node.name),
       role: String(node.role),
       title: node.title == null ? null : String(node.title),

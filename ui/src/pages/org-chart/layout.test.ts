@@ -100,3 +100,8 @@ describe("compact organization layout", () => {
     expect(reads).toBeLessThanOrEqual(18);
   });
 });
+
+it("preserves human profile photos through layout", () => {
+  const result = layoutOrganization([{ ...node("human"), kind: "user", image: "/api/assets/photo/content" }], { width: 800, height: 600 }, geometry);
+  expect(result.roots[0]).toMatchObject({ kind: "user", image: "/api/assets/photo/content" });
+});

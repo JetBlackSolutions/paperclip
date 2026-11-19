@@ -73,6 +73,8 @@ export interface ClaudeLoginResult {
 export interface OrgNode {
   id: string;
   kind?: "agent" | "user";
+  /** Profile photo for a human member, if available. */
+  image?: string | null;
   name: string;
   role: string;
   title?: string | null;
