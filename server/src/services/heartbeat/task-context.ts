@@ -332,23 +332,25 @@ export async function prepareHeartbeatTaskContext(db: Db, input: HeartbeatTaskCo
   if (workflowCase) context.paperclipCase = workflowCase;
   else delete context.paperclipCase;
   const assignmentPrefix = liveVoiceTaskPrefix + caseExecutionMarkdown(workflowCase);
-  let taskMarkdown = assignmentPrefix + buildPaperclipTaskMarkdown({ ...taskMarkdownInput, taskPlan }) + chatCompletionInstruction(context);
-  let taskMarkdownAssignment = assignmentPrefix + buildPaperclipTaskMarkdown({
+  // buildPaperclipTaskMarkdown returns null when the run has no task, such as an unscoped timer
+  // wake. Concatenating that null delivered the literal string "null" as the agent's task brief.
+  let taskMarkdown = assignmentPrefix + (buildPaperclipTaskMarkdown({ ...taskMarkdownInput, taskPlan }) ?? "") + chatCompletionInstruction(context);
+  let taskMarkdownAssignment = assignmentPrefix + (buildPaperclipTaskMarkdown({
     ...taskMarkdownInput,
     taskPlan,
     includeWakeComments: false,
-  }) + chatCompletionInstruction(context);
-  const taskMarkdownCompact = assignmentPrefix + buildPaperclipTaskMarkdown({
+  }) ?? "") + chatCompletionInstruction(context);
+  const taskMarkdownCompact = assignmentPrefix + (buildPaperclipTaskMarkdown({
     ...taskMarkdownInput,
     taskPlan,
     includeDescription: false,
-  }) + chatCompletionInstruction(context);
-  const taskMarkdownAssignmentCompact = assignmentPrefix + buildPaperclipTaskMarkdown({
+  }) ?? "") + chatCompletionInstruction(context);
+  const taskMarkdownAssignmentCompact = assignmentPrefix + (buildPaperclipTaskMarkdown({
     ...taskMarkdownInput,
     taskPlan,
     includeDescription: false,
     includeWakeComments: false,
-  }) + chatCompletionInstruction(context);
+  }) ?? "") + chatCompletionInstruction(context);
   if (issueRef) {
     context.paperclipIssue = {
       id: issueRef.id,

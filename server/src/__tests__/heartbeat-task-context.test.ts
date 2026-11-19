@@ -312,4 +312,21 @@ describePostgres("heartbeat task context delivered to an adapter", () => {
     expect(context.paperclipSkillTest).toBeUndefined();
     expect(context.paperclipTurnContext).toMatchObject({ events: { comments: [] } });
   });
+
+  it("delivers no task brief, not the string \"null\", on a timer wake without a task", async () => {
+    const f = await seed();
+    const [run] = await db.insert(heartbeatRuns).values({ companyId: f.companyId, agentId: f.agentId,
+      status: "running", invocationSource: "timer" }).returning();
+    const [agent] = await db.select().from(agents).where(eq(agents.id, f.agentId));
+    const context: Record<string, unknown> = { wakeReason: "heartbeat_timer", paperclipTaskMarkdown: "stale brief" };
+    await prepareHeartbeatTaskContext(db, {
+      run, agent, task: { issueRef: null, issueContext: null, context, taskSession: null },
+      policy: { trustPreset: { kind: "standard" }, experimentalInstanceSettings: {} },
+      services: { issuesSvc: { getAncestors: async () => [] }, getPinnedSkillTestContext: async () => null },
+    });
+    for (const key of ["paperclipTaskMarkdown", "paperclipTaskMarkdownAssignment", "paperclipTaskMarkdownCompact",
+      "paperclipTaskMarkdownAssignmentCompact"]) {
+      expect(context, key).not.toHaveProperty(key);
+    }
+  });
 });
