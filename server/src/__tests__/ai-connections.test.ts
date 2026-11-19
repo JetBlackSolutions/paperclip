@@ -2190,7 +2190,7 @@ console.log(JSON.stringify({ type: "result", subtype: "success", result: "hello"
     const appCompanyId = randomUUID();
     await db.insert(companies).values({ id: appCompanyId, name: "Archived provider app", issuePrefix: provider === "openrouter" ? "AIOP" : "AIA" });
     await db.insert(companyMemberships).values({ companyId: appCompanyId, principalId: "carol", principalType: "user", status: "active", membershipRole: "member" });
-    const account = { provider, method: "api_key", ownership, apiKey: "fixture", agentIds: [], allAgents: true } as const;
+    const account = { provider, method: "api_key", ownership, apiKey: "fixture", agentIds: [] as string[], allAgents: true } as const;
     const first = await service.save(appCompanyId, "carol", { ...account, name: "First" }, "fixture-first");
     const [firstConnection] = await db.select().from(toolConnections).where(eq(toolConnections.id, first.connectionId));
     await toolAccessService(db).archiveConnection(first.connectionId, appCompanyId);
@@ -2212,7 +2212,7 @@ console.log(JSON.stringify({ type: "result", subtype: "success", result: "hello"
     const raceCompanyId = randomUUID();
     await db.insert(companies).values({ id: raceCompanyId, name: "Racing provider app", issuePrefix: "AIR" });
     await db.insert(companyMemberships).values({ companyId: raceCompanyId, principalId: "dave", principalType: "user", status: "active", membershipRole: "member" });
-    const account = { provider: "anthropic", method: "api_key", ownership: "personal", apiKey: "fixture", agentIds: [], allAgents: true } as const;
+    const account = { provider: "anthropic", method: "api_key", ownership: "personal", apiKey: "fixture", agentIds: [] as string[], allAgents: true } as const;
     let last = await service.save(raceCompanyId, "dave", { ...account, name: "Initial" }, "fixture-initial");
     for (let round = 0; round < 8; round += 1) {
       const [, next] = await Promise.all([
