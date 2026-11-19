@@ -267,12 +267,12 @@ export function createOAuthDiscovery({ fetchRemoteHttpUrl, assertRemoteEndpointA
         ? oauth.resource.trim()
         : canonicalResourceIndicator(remoteEndpoint(connection.config));
     if (configuredAuthorizationUrl && configuredTokenUrl) {
-      // Pre-existing generic connections cached endpoints before refresh-scope
-      // support was recorded. Recover that capability from their bound metadata
-      // without adopting a different issuer or changing their requested tool scopes.
+      // Pre-existing connections, generic or catalog, cached endpoints before
+      // refresh-scope support was recorded. Recover that capability from their bound
+      // metadata without adopting a different issuer or changing their requested tool
+      // scopes. Sign-in start decides whether a catalog method may ask for it.
       let refreshMetadata: OAuthProviderEndpoints | null = null;
       if (
-        !connection.config.sourceTemplateKey &&
         typeof oauth.offlineAccessSupported !== "boolean" &&
         typeof oauth.metadataUrl === "string"
       ) {

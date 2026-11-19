@@ -1510,6 +1510,73 @@ describeEmbeddedPostgres("generic remote MCP connections", () => {
     } finally { await fixture.close(); }
   });
 
+  it("asks a catalog MCP server that offers only sign-in scopes for refresh access, so its sign-in renews", async () => {
+    // Executor's OIDC server defaults to `openid` and returns a refresh token only for `offline_access`.
+    const fixture = await startOAuthRefreshFixture({ serverScopes: ["openid", "profile", "email"], resourceScopes: [], challengeScope: false, requireMcpScope: false });
+    try {
+      const company = await createCompany(db);
+      const service = toolAccessService(db);
+      const connected = await service.connectGalleryApp(company.id, { galleryKey: "executor", link: fixture.mcpUrl });
+      const input = { redirectUri: "http://127.0.0.1:3100/api/tools/oauth/callback", actor: { actorType: "user" as const, actorId: "board-user" } };
+      const start = await service.startOAuth(company.id, connected.connectionId, input);
+      const url = new URL(start.authorizationUrl);
+      expect(url.searchParams.get("scope")).toBe("openid offline_access");
+      expect(url.searchParams.get("prompt")).toBe("consent");
+      const callback = await approveFixtureAuthorization(start.authorizationUrl);
+      const completed = await service.completeOAuthCallback({
+        state: callback.searchParams.get("state")!, code: callback.searchParams.get("code")!,
+        iss: callback.searchParams.get("iss")!, redirectUri: input.redirectUri, actor: input.actor,
+      });
+      expect(completed.connection.status).toBe("active");
+      expect(completed.connection.credentialSecretRefs.some((ref) => ref.configPath === "oauth.refresh_token")).toBe(true);
+
+      // The access token expires; the catalog connection renews it without a new sign-in.
+      fixture.advanceTime(3_601_000);
+      await expireFixtureCredentials(connected.connectionId);
+      await expect(service.refreshCatalog(connected.connectionId, input.actor)).resolves.toMatchObject({ catalog: expect.any(Array) });
+      expect(fixture.events.filter((event) => event.kind === "token").map((event) => event.grantType))
+        .toEqual(["authorization_code", "refresh_token"]);
+      expect(fixture.events.filter((event) => event.kind === "authorization")).toHaveLength(1);
+    } finally { await fixture.close(); }
+  });
+
+  it("recovers refresh access when reconnecting a catalog connection saved before it was recorded", async () => {
+    const fixture = await startOAuthRefreshFixture({ serverScopes: ["openid", "profile", "email"], resourceScopes: [], challengeScope: false, requireMcpScope: false });
+    try {
+      const company = await createCompany(db);
+      const service = toolAccessService(db);
+      const connected = await service.connectGalleryApp(company.id, { galleryKey: "executor", link: fixture.mcpUrl });
+      const input = { redirectUri: "http://127.0.0.1:3100/api/tools/oauth/callback", actor: { actorType: "user" as const, actorId: "board-user" } };
+      await service.startOAuth(company.id, connected.connectionId, input);
+      // As saved by earlier versions: no requested scopes, the granted `openid`, and no refresh capability.
+      const [connection] = await db.select().from(toolConnections).where(eq(toolConnections.id, connected.connectionId));
+      const oauth: Record<string, unknown> = { ...connection!.config.oauth as Record<string, unknown>, scopes: [], scope: "openid" };
+      delete oauth.offlineAccessSupported;
+      const config = { ...connection!.config, oauth };
+      await db.update(toolConnections).set({ config, transportConfig: config }).where(eq(toolConnections.id, connected.connectionId));
+      const reconnect = await service.startOAuth(company.id, connected.connectionId, input);
+      const url = new URL(reconnect.authorizationUrl);
+      expect(url.searchParams.get("scope")).toBe("openid offline_access");
+      expect(url.searchParams.get("prompt")).toBe("consent");
+    } finally { await fixture.close(); }
+  });
+
+  it("leaves a catalog MCP server that offers API scopes on its default scope", async () => {
+    // An explicit scope list could narrow API access the server's default grants.
+    const fixture = await startOAuthRefreshFixture();
+    try {
+      const company = await createCompany(db);
+      const service = toolAccessService(db);
+      const connected = await service.connectGalleryApp(company.id, { galleryKey: "executor", link: fixture.mcpUrl });
+      const start = await service.startOAuth(company.id, connected.connectionId, {
+        redirectUri: "http://127.0.0.1:3100/api/tools/oauth/callback", actor: { actorType: "user", actorId: "board-user" },
+      });
+      const url = new URL(start.authorizationUrl);
+      expect(url.searchParams.has("scope")).toBe(false);
+      expect(url.searchParams.has("prompt")).toBe(false);
+    } finally { await fixture.close(); }
+  });
+
   it("discovers OAuth for a personal URL connection before its user grant exists", async () => {
     const fixture = installMcpOAuthFixture({ auth: "oauth" });
     const company = await createCompany(db);
