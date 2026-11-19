@@ -18,6 +18,8 @@ Org API nodes include `kind`: `user` or `agent`, plus `title` for display and `i
 
 These fields live in `company_staff_profiles`. Membership role and status still control access.
 
+A board user with member-management permission can update these profile fields for another owner or instance admin, or for themself, without changing access. A reporting line does not demote or remove an owner. Access changes still use the existing protected-member checks.
+
 ## View the hybrid org chart
 
 Open **Org chart** (`/org`). Human cards use a distinct style: account photo (or a user-icon fallback) and a **Human member** label. Click a human card to open that member in Settings when you have member-management permission. Agent cards are unchanged.

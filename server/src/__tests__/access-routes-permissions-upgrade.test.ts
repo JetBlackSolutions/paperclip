@@ -8,6 +8,8 @@ import {
   agents,
   companies,
   companyMemberships,
+  companyStaffProfiles,
+  instanceUserRoles,
   connectionGrantDelegations,
   connectionGrants,
   createDb,
@@ -106,6 +108,8 @@ describeEmbeddedPostgres("access routes permissions upgrade compatibility", () =
     await db.delete(toolConnections);
     await db.delete(toolApplications);
     await db.delete(principalPermissionGrants);
+    await db.delete(companyStaffProfiles);
+    await db.delete(instanceUserRoles);
     await db.delete(companyMemberships);
     await db.delete(agents);
     await db.delete(companies);
@@ -114,6 +118,62 @@ describeEmbeddedPostgres("access routes permissions upgrade compatibility", () =
   afterAll(async () => {
     await tempDb?.cleanup();
   });
+
+  it.each([false, true])("updates a peer owner's reporting line without changing access (instance admin: %s)", async (instanceAdmin) => {
+    const { company, owner } = await createCompanyWithOwner(db);
+    const [peer] = await db.insert(companyMemberships).values({
+      companyId: company.id, principalType: "user", principalId: `peer-${randomUUID()}`,
+      status: "active", membershipRole: "owner",
+    }).returning();
+    if (instanceAdmin) await db.insert(instanceUserRoles).values({ userId: peer!.principalId, role: "instance_admin" });
+    const app = await createApp(db, company.id, owner.principalId);
+    // The Members form submits the unchanged access fields with the profile.
+    const res = await request(app).patch(`/api/companies/${company.id}/members/${peer!.id}`).send({
+      membershipRole: "owner", status: "active",
+      staffProfile: { jobTitle: "Chief Operating Officer", orgRole: "COO", reportsTo: { type: "user", id: owner.principalId } },
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ membershipRole: "owner", status: "active", staffProfile: {
+      reportsToPrincipalType: "user", reportsToPrincipalId: owner.principalId,
+    } });
+    const profileOnly = await request(app).patch(`/api/companies/${company.id}/members/${peer!.id}`)
+      .send({ staffProfile: { jobTitle: "Updated title" } });
+    expect(profileOnly.status, JSON.stringify(profileOnly.body)).toBe(200);
+    expect(profileOnly.body.membershipRole).toBe("owner");
+    expect(profileOnly.body.status).toBe("active");
+  }, 10_000);
+
+  it("updates the current owner's profile without bypassing reporting validation", async () => {
+    const { company, owner } = await createCompanyWithOwner(db);
+    const app = await createApp(db, company.id, owner.principalId);
+    const res = await request(app).patch(`/api/companies/${company.id}/members/${owner.id}`)
+      .send({ membershipRole: "owner", status: "active", staffProfile: { jobTitle: "CEO", reportsTo: null } });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ membershipRole: "owner", status: "active", staffProfile: { jobTitle: "CEO" } });
+    const invalid = await request(app).patch(`/api/companies/${company.id}/members/${owner.id}`)
+      .send({ staffProfile: { reportsTo: { type: "user", id: owner.principalId } } });
+    expect(invalid.status, JSON.stringify(invalid.body)).toBe(400);
+    expect(invalid.body.error).toContain("cannot report to themself");
+  }, 10_000);
+
+  it.each([{ membershipRole: "admin" }, { membershipRole: null }, { status: "suspended" }])(
+    "still rejects protected owner access changes mixed with a profile edit: %j", async (change) => {
+      const { company, owner } = await createCompanyWithOwner(db);
+      const [peer] = await db.insert(companyMemberships).values({
+        companyId: company.id, principalType: "user", principalId: `peer-${randomUUID()}`,
+        status: "active", membershipRole: "owner",
+      }).returning();
+      await db.insert(instanceUserRoles).values({ userId: peer!.principalId, role: "instance_admin" });
+      const res = await request(await createApp(db, company.id, owner.principalId))
+        .patch(`/api/companies/${company.id}/members/${peer!.id}`)
+        .send({ ...change, staffProfile: { reportsTo: { type: "user", id: owner.principalId } } });
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(res.body.error).toContain("Instance admins cannot be removed");
+      const [unchanged] = await db.select().from(companyMemberships).where(eq(companyMemberships.id, peer!.id));
+      expect(unchanged).toMatchObject({ membershipRole: "owner", status: "active" });
+      expect(await db.select().from(companyStaffProfiles)).toHaveLength(0);
+    }, 10_000,
+  );
 
   it("rejects owner self-lockout through the member route after the permissions upgrade", async () => {
     const { company, owner } = await createCompanyWithOwner(db);
