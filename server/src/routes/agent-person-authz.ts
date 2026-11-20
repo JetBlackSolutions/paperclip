@@ -21,6 +21,9 @@ async function resolveDirectedByPerson(db: Db, req: Request): Promise<boolean> {
   // JBS fork: only a signed run token proves the run. A long-lived agent key takes its run id from the
   // caller's X-Paperclip-Run-Id header, so a key holder could replay any past run the person directed.
   if (actor.source !== "agent_jwt") return false;
+  // JBS fork: a task-scoped token (skill_test, task_bridge) is confined to its own task, so it never
+  // borrows the person's company-wide authority.
+  if (actor.keyScope && actor.keyScope.kind !== "standard") return false;
   const personUserId = actor.onBehalfOfUserId;
   const [run] = await db
     .select({

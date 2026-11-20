@@ -73,6 +73,15 @@ describe("agentPersonInCompany", () => {
     expect(await agentPersonInCompany(db, agentRequest({ source: "agent_key", keyId: "key-1" }), companyId)).toBeNull();
   });
 
+  it("never lends the person's authority to a task-scoped run token", async () => {
+    loadRunBoundIssue.mockResolvedValue({ createdByUserId: person });
+    const db = fakeDb({ run: run() });
+    for (const keyScope of [{ kind: "skill_test", issueId: "issue-1" }, { kind: "task_bridge", issueId: "issue-1" }]) {
+      expect(await agentPersonInCompany(db, agentRequest({ keyScope }), companyId)).toBeNull();
+    }
+    expect(await agentPersonInCompany(db, agentRequest({ keyScope: { kind: "standard" } }), companyId)).toEqual({ userId: person, role: "owner" });
+  });
+
   it("refuses a run that is no longer running", async () => {
     loadRunBoundIssue.mockResolvedValue({ createdByUserId: person });
     for (const status of ["succeeded", "failed", "cancelled", "queued"]) {
