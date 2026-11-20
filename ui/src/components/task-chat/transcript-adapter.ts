@@ -230,10 +230,11 @@ export function summarizeToolInput(input: unknown): string | undefined {
   }
   // The acpx log parser synthesizes { text, status } onto tool inputs from the
   // event's summary line — presentation noise, not call parameters. Raw ids
-  // (task, agent, run UUIDs) are handles for the API, not for people.
+  // (task, agent, run UUIDs) are handles for the API, not for people. A blank
+  // value (often a redacted argument) would render as a bare "key:".
   const entries = Object.entries(record).filter(
     ([k, v]) =>
-      (typeof v === "string" ||
+      ((typeof v === "string" && v.trim() !== "") ||
         typeof v === "number" ||
         typeof v === "boolean") &&
       !isOpaqueId(v) &&
