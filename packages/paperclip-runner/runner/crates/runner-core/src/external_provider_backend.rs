@@ -384,12 +384,17 @@ impl State {
             "assignmentRevision":self.assignment_revision})
     }
 
-    /// True when an accepted report is waiting only for the provider's
-    /// `finish`: no tool call or runtime input is still open.
-    fn awaiting_finish_after_accepted_completion(&self) -> bool {
-        self.lifecycle == "running"
-            && self.completion.is_some()
-            && self.tools.pending_calls().next().is_none()
+    /// True while a running turn holds an accepted report that the provider
+    /// has not finished.
+    fn holds_unfinished_accepted_completion(&self) -> bool {
+        self.lifecycle == "running" && self.completion.is_some()
+    }
+
+    /// True when nothing but the provider's `finish` is outstanding: no tool
+    /// call or runtime input is still open. The provider's own `finish` has
+    /// the same requirement.
+    fn only_finish_outstanding(&self) -> bool {
+        self.tools.pending_calls().next().is_none()
             && self.runtime_inputs.values().all(|input| input.consumed)
     }
 
@@ -1010,14 +1015,19 @@ impl CommandExecutor for ExternalCommandExecutor {
         self.restore()?;
         let now = crate::durable::current_unix_ms()?;
         // An accepted report is final. Close the turn with it when the provider
-        // does not send `finish` within the grace period, and before expiry
-        // would otherwise fence the turn and discard the report.
+        // does not send `finish` within the grace period. The grace close waits
+        // for calls still in flight, as the provider's own `finish` does. At
+        // expiry the report closes the turn even with calls in flight, because
+        // fencing would otherwise discard it; `settle_turn` keeps those pending
+        // effects and still accepts their late results.
         if let Some(state) = self.state.as_mut() {
-            if state.awaiting_finish_after_accepted_completion() {
+            if state.holds_unfinished_accepted_completion() {
                 let prior = state.clone();
                 // State written before this field existed starts its grace now.
                 let accepted_at = *state.completion_accepted_at_unix_ms.get_or_insert(now);
-                let due = now >= accepted_at.saturating_add(ACCEPTED_COMPLETION_FINISH_GRACE_MS)
+                let grace_elapsed =
+                    now >= accepted_at.saturating_add(ACCEPTED_COMPLETION_FINISH_GRACE_MS);
+                let due = (grace_elapsed && state.only_finish_outstanding())
                     || now >= state.descriptor.expires_at_unix_ms;
                 let item_id = format!("{}-accepted-completion", state.turn_id);
                 let changed = prior.completion_accepted_at_unix_ms.is_none() || due;
@@ -1540,6 +1550,44 @@ mod tests {
             .find(|e| e.event_type == "run.terminal")
             .unwrap();
         assert_eq!(terminal.payload["runTerminalState"], "succeeded");
+    }
+    #[test]
+    fn a_call_in_flight_delays_the_grace_close_but_not_the_expiry_close() {
+        let dir = TestDirectory::new();
+        let mut e = prepared(dir.path());
+        accept(&mut e);
+        // A parallel call starts before the report and is still in flight.
+        call(
+            &mut e,
+            "external_provider.operation",
+            operation(
+                "save-1",
+                "tool",
+                json!({"name":"save_report","arguments":{}}),
+            ),
+        );
+        accepted_report(&mut e);
+        let state = e.state.as_mut().unwrap();
+        state.completion_accepted_at_unix_ms = Some(0);
+        assert_eq!(count(&e.poll_events().unwrap(), "run.terminal"), 0);
+        let now = crate::durable::current_unix_ms().unwrap();
+        let state = e.state.as_mut().unwrap();
+        state.descriptor.accept_by_unix_ms = now - 2;
+        state.descriptor.expires_at_unix_ms = now - 1;
+        let events = e.poll_events().unwrap();
+        assert_eq!(count(&events, "turn.failed"), 0);
+        assert_eq!(count(&events, "run.result.proposed"), 1);
+        let terminal = events
+            .iter()
+            .find(|e| e.event_type == "run.terminal")
+            .unwrap();
+        assert_eq!(terminal.payload["runTerminalState"], "succeeded");
+        // The in-flight call keeps its pending effect and still takes its late result.
+        call(
+            &mut e,
+            "semantic_tool.result",
+            json!({"callId":"save-1","operationId":"save_report","result":{"saved":true},"isError":false}),
+        );
     }
     #[test]
     fn an_open_tool_call_still_holds_the_turn_open() {
