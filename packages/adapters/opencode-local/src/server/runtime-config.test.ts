@@ -5,7 +5,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OPENROUTER_ATTRIBUTION_HEADERS } from "@paperclipai/adapter-utils/openrouter-attribution";
-import { prepareOpenCodeRuntimeConfig } from "./runtime-config.js";
+import { buildPaperclipOpenCodeMcpEntries, prepareOpenCodeRuntimeConfig } from "./runtime-config.js";
 
 const cleanupPaths = new Set<string>();
 
@@ -457,6 +457,63 @@ describe("prepareOpenCodeRuntimeConfig", () => {
     const config = JSON.parse(await fs.readFile(path.join(prepared.env.XDG_CONFIG_HOME, "opencode", "opencode.json"), "utf8"));
     expect(config.permission).toBeUndefined();
     expect(config.provider.openrouter.options.headers["HTTP-Referer"]).toBe("https://paperclip.ing");
+    await prepared.cleanup();
+  });
+
+  it("writes the run's Paperclip-managed MCP servers as remote OpenCode servers", async () => {
+    const operatorServer = { type: "local", command: ["operator-mcp"], enabled: true };
+    const configHome = await makeConfigHome({ mcp: { operator: operatorServer } });
+    const prepared = await prepareOpenCodeRuntimeConfig({
+      env: { XDG_CONFIG_HOME: configHome },
+      config: {},
+      mcpServers: [
+        { name: "Paperclip projects", url: "https://paperclip.example/api/mcp/project-tools", token: "project-token", connectionId: "paperclip-project-tools" },
+        { name: "paperclip-assigned", url: "https://paperclip.example/mcp/gateways/gw_1", token: "assigned-token", connectionId: "assignment:abcdef1234567890" },
+      ],
+    });
+    cleanupPaths.add(prepared.env.XDG_CONFIG_HOME);
+    const runtimeConfigPath = path.join(prepared.env.XDG_CONFIG_HOME, "opencode", "opencode.json");
+    const config = JSON.parse(await fs.readFile(runtimeConfigPath, "utf8"));
+
+    expect(config.mcp).toEqual({
+      operator: operatorServer,
+      paperclip_projects: {
+        type: "remote",
+        url: "https://paperclip.example/api/mcp/project-tools",
+        headers: { Authorization: "Bearer project-token" },
+        enabled: true,
+      },
+      "paperclip-assigned": {
+        type: "remote",
+        url: "https://paperclip.example/mcp/gateways/gw_1",
+        headers: { Authorization: "Bearer assigned-token" },
+        enabled: true,
+      },
+    });
+    expect(prepared.notes).toContain(
+      "Injected 2 Paperclip-managed MCP server(s) into the runtime OpenCode config: paperclip_projects, paperclip-assigned.",
+    );
+    expect(prepared.notes.join("\n")).not.toContain("token");
+    if (process.platform !== "win32") {
+      expect((await fs.stat(runtimeConfigPath)).mode & 0o777).toBe(0o600);
+    }
+    await prepared.cleanup();
+  });
+
+  it("gives duplicate MCP server names distinct keys and adds no mcp block without servers", async () => {
+    expect(Object.keys(buildPaperclipOpenCodeMcpEntries([
+      { name: "Shared", url: "https://a.example/mcp", token: "a", connectionId: "assignment:11111111aaaa" },
+      { name: "Shared", url: "https://b.example/mcp", token: "b", connectionId: "assignment:22222222bbbb" },
+      { name: "Shared", url: "https://c.example/mcp", token: "c", connectionId: "assignment:22222222cccc" },
+      { name: "  ", url: "https://d.example/mcp", token: "d", connectionId: "blank" },
+    ]))).toEqual(["shared", "shared-22222222", "shared-22222222-2", "paperclip"]);
+
+    const configHome = await makeConfigHome({ theme: "system" });
+    const prepared = await prepareOpenCodeRuntimeConfig({ env: { XDG_CONFIG_HOME: configHome }, config: {}, mcpServers: [] });
+    cleanupPaths.add(prepared.env.XDG_CONFIG_HOME);
+    const config = JSON.parse(await fs.readFile(path.join(prepared.env.XDG_CONFIG_HOME, "opencode", "opencode.json"), "utf8"));
+    expect(config).not.toHaveProperty("mcp");
+    expect(prepared.notes.some((note) => note.includes("MCP server"))).toBe(false);
     await prepared.cleanup();
   });
 });

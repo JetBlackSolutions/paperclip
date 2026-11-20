@@ -970,7 +970,8 @@ const openclawGatewayAdapter: ServerAdapterModule = {
 
 const openCodeLocalAdapter: ServerAdapterModule = {
   type: "opencode_local",
-  runtimeToolDelivery: "environment",
+  // The adapter writes runtime MCP servers into its per-run OpenCode config (local targets).
+  runtimeToolDelivery: "native_mcp",
   execute: openCodeExecute,
   testEnvironment: openCodeTestEnvironment,
   listSkills: listOpenCodeSkills,

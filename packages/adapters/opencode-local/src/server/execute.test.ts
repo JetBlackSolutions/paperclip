@@ -107,6 +107,49 @@ describe("OpenCode local skill injection", () => {
     expect(prompts[1]).toContain("Connection tools:");
   });
 
+  it("hands the run's Paperclip-managed MCP servers to a local OpenCode run", async () => {
+    const commandPath = path.join(configHome, "fake-opencode-mcp");
+    await fs.writeFile(commandPath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    let runtimeMcp: unknown;
+    let commandNotes: string[] = [];
+    runProcessMock.mockReset();
+    runProcessMock.mockImplementation(async (_runId, _target, _command, _args, options) => {
+      const env = (options as { env: Record<string, string> }).env;
+      const runtimeConfig = JSON.parse(
+        await fs.readFile(path.join(env.XDG_CONFIG_HOME!, "opencode", "opencode.json"), "utf8"),
+      ) as Record<string, unknown>;
+      runtimeMcp = runtimeConfig.mcp;
+      return probeResult({ stdout: JSON.stringify({ type: "text", sessionID: "mcp-session", part: { text: "done" } }) });
+    });
+    const result = await execute({
+      runId: "run-mcp",
+      agent: { id: "agent-1", companyId: "company-1", name: "OpenCode", adapterType: "opencode_local", adapterConfig: {} },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: { command: commandPath, cwd: configHome, model: "openai/gpt-5", env: { OPENCODE_ALLOW_ALL_MODELS: "1" } },
+      context: {},
+      runtimeMcp: {
+        getServers: () => [
+          { name: "paperclip-assigned", url: "https://paperclip.example/mcp/gateways/gw_1", token: "run-token", connectionId: "assignment:abc" },
+        ],
+      },
+      onLog: async () => {},
+      onMeta: async (meta) => { commandNotes = (meta.commandNotes as string[] | undefined) ?? []; },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(runtimeMcp).toEqual({
+      "paperclip-assigned": {
+        type: "remote",
+        url: "https://paperclip.example/mcp/gateways/gw_1",
+        headers: { Authorization: "Bearer run-token" },
+        enabled: true,
+      },
+    });
+    expect(commandNotes).toContain(
+      "Injected 1 Paperclip-managed MCP server(s) into the runtime OpenCode config: paperclip-assigned.",
+    );
+    expect(JSON.stringify(commandNotes)).not.toContain("run-token");
+  });
+
   it("injects runtime skills into the configured child HOME", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-opencode-configured-home-"));
     const processHome = path.join(root, "process-home");

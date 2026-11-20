@@ -330,10 +330,21 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (authToken) {
     env.PAPERCLIP_API_KEY = authToken;
   }
+  // Paperclip's MCP endpoints are addressed by the host's API URL, which a remote
+  // target reaches only through the Paperclip bridge. Until that route exists,
+  // remote runs keep the environment-delivered runtime tools and skip MCP.
+  const offeredRuntimeMcpServers = ctx.runtimeMcp?.getServers() ?? [];
+  const runtimeMcpServers = executionTargetIsRemote ? [] : offeredRuntimeMcpServers;
   const preparedRuntimeConfig = await prepareOpenCodeRuntimeConfig({
     env, config,
     sandboxToolOomPreference: executionTarget?.kind === "remote" && executionTarget.transport === "sandbox",
+    mcpServers: runtimeMcpServers,
   });
+  if (executionTargetIsRemote && offeredRuntimeMcpServers.length > 0) {
+    preparedRuntimeConfig.notes.push(
+      `Skipped ${offeredRuntimeMcpServers.length} Paperclip-managed MCP server(s): MCP delivery to remote OpenCode targets is not supported yet.`,
+    );
+  }
   const localRuntimeConfigHome =
     preparedRuntimeConfig.notes.length > 0 ? preparedRuntimeConfig.env.XDG_CONFIG_HOME : "";
   try {
