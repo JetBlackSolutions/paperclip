@@ -2106,10 +2106,24 @@ export function routineService(
 
     list: async (
       companyId: string,
-      filters?: { projectId?: string | null },
+      filters?: {
+        projectId?: string | null;
+        /** Words in the title or description, ignoring case. */
+        query?: string;
+        status?: string;
+        assigneeAgentId?: string;
+        responsibleUserId?: string;
+      },
     ): Promise<RoutineListItem[]> => {
       const conditions = [eq(routines.companyId, companyId)];
       if (filters?.projectId) conditions.push(eq(routines.projectId, filters.projectId));
+      if (filters?.query) {
+        const pattern = `%${filters.query.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+        conditions.push(or(sql`${routines.title} ilike ${pattern}`, sql`coalesce(${routines.description}, '') ilike ${pattern}`)!);
+      }
+      if (filters?.status) conditions.push(eq(routines.status, filters.status));
+      if (filters?.assigneeAgentId) conditions.push(eq(routines.assigneeAgentId, filters.assigneeAgentId));
+      if (filters?.responsibleUserId) conditions.push(eq(routines.responsibleUserId, filters.responsibleUserId));
 
       const rows = await db
         .select()

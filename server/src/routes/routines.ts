@@ -1,4 +1,5 @@
 import { Router, type Request } from "express";
+import { z } from "zod";
 import { listProtectedEnvironmentKeyHolders, protectedEnvironmentKeyWarnings } from "../services/protected-environment-keys.js";
 import type { Db } from "@paperclipai/db";
 import {
@@ -6,6 +7,7 @@ import {
   createDocumentAnnotationCommentSchema,
   createDocumentAnnotationThreadSchema,
   createRoutineTriggerSchema,
+  ROUTINE_STATUSES,
   rotateRoutineTriggerSecretSchema,
   runRoutineSchema,
   updateDocumentAnnotationThreadSchema,
@@ -15,10 +17,20 @@ import {
 import { trackRoutineCreated } from "@paperclipai/shared/telemetry";
 import { validate, validateIssueMutationBody } from "../middleware/validate.js";
 import { accessService, documentAnnotationService, logActivity, routineService } from "../services/index.js";
+import { agentPersonInCompany } from "./agent-person-authz.js";
 import { assertCompanyAccess, getAccessibleResource, getActorInfo, hasCompanyAccess } from "./authz.js";
 import { badRequest, forbidden, unauthorized, unsupportedMediaType } from "../errors.js";
 import { getTelemetryClient } from "../telemetry.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
+
+/** Filters for the routine list; all are applied in the query, before any limit. */
+const listRoutinesQuerySchema = z.object({
+  projectId: z.string().optional(),
+  q: z.string().trim().min(1).max(200).optional(),
+  status: z.enum(ROUTINE_STATUSES).optional(),
+  assigneeAgentId: z.string().guid().optional(),
+  responsibleUserId: z.string().trim().min(1).max(200).optional(),
+});
 
 export function routineRoutes(
   db: Db,
@@ -117,14 +129,44 @@ export function routineRoutes(
     }
   }
 
+  /**
+   * The person an agent acts for on this routine: the person who directed its
+   * run, when that person is responsible for the routine or is a company owner
+   * or admin (who may change any routine). Null otherwise.
+   *
+   * JBS fork: upstream #22274 allows only the responsible person. The owner and
+   * admin case follows upstream's own rule for responsibilities
+   * (agentActsForResponsibilityOwner): an agent may change what the person
+   * who directed it could.
+   */
+  async function agentActsForRoutinePerson(req: Request, routine: { companyId: string; responsibleUserId: string | null }) {
+    const person = await agentPersonInCompany(db, req, routine.companyId);
+    if (!person) return null;
+    return routine.responsibleUserId === person.userId || person.role === "owner" || person.role === "admin" ? person.userId : null;
+  }
+
+  /**
+   * What a person needs tasks:assign for (who runs a routine, turning it on,
+   * its schedule): an agent may do it on a routine it runs and keeps running,
+   * and on any other only when the person it acts for may assign tasks.
+   */
+  async function assertAgentCanAssign(req: Request, routine: { companyId: string; responsibleUserId: string | null }, runsIt: boolean) {
+    if (req.actor.type !== "agent" || runsIt) return;
+    const actsFor = await agentActsForRoutinePerson(req, routine);
+    if (!actsFor || !(await access.canUser(routine.companyId, actsFor, "tasks:assign"))) {
+      throw forbidden("Agents can change who runs a routine, turn it on or change its schedule only on routines they run, unless the person they act for may assign tasks");
+    }
+  }
+
   async function assertCanManageExistingRoutine(req: Request, routineId: string) {
     const routine = await svc.get(routineId);
     if (!routine || !hasCompanyAccess(req, routine.companyId)) return null;
     assertCompanyAccess(req, routine.companyId);
     if (req.actor.type === "board") return routine;
     if (req.actor.type !== "agent" || !req.actor.agentId) throw unauthorized();
-    if (routine.assigneeAgentId !== req.actor.agentId) {
-      throw forbidden("Agents can only manage routines assigned to themselves");
+    // An agent manages its own routines, and those of the person its run works for.
+    if (routine.assigneeAgentId !== req.actor.agentId && !(await agentActsForRoutinePerson(req, routine))) {
+      throw forbidden("Agents can only manage routines assigned to themselves, or routines the person they work for is responsible for");
     }
     return routine;
   }
@@ -161,8 +203,8 @@ export function routineRoutes(
   router.get("/companies/:companyId/routines", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
-    const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
-    const result = await svc.list(companyId, { projectId });
+    const { q, ...filters } = listRoutinesQuerySchema.parse(req.query);
+    const result = await svc.list(companyId, { ...filters, ...(q ? { query: q } : {}) });
     res.json(result);
   });
 
@@ -392,21 +434,18 @@ export function routineRoutes(
     }
     if (assigneeWillChange) {
       await assertBoardCanAssignTasks(req, routine.companyId);
+      // Taking a routine from another agent, or handing one on, is an assignment the person must be allowed to make.
+      await assertAgentCanAssign(req, routine, false);
     }
     const statusWillActivate =
       req.body.status !== undefined &&
       req.body.status === "active" &&
       routine.status !== "active";
-    if (statusWillActivate) {
+    if (statusWillActivate || req.body.schedule !== undefined) {
       await assertBoardCanAssignTasks(req, routine.companyId);
+      await assertAgentCanAssign(req, routine, routine.assigneeAgentId === req.actor.agentId && !assigneeWillChange);
     }
-    if (
-      req.actor.type === "agent" &&
-      req.body.assigneeAgentId !== undefined &&
-      req.body.assigneeAgentId !== req.actor.agentId
-    ) {
-      throw forbidden("Agents can only assign routines to themselves");
-    }
+    const actsFor = req.actor.type === "agent" ? await agentActsForRoutinePerson(req, routine) : null;
     const updated = await svc.update(routine.id, req.body, {
       agentId: req.actor.type === "agent" ? req.actor.agentId : null,
       userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
@@ -425,6 +464,7 @@ export function routineRoutes(
       entityId: routine.id,
       details: {
         title: updated?.title ?? routine.title,
+        ...(actsFor ? { onBehalfOfUserId: actsFor } : {}),
         ...(req.body.responsibleUserId !== undefined ? {
           previousResponsibleUserId: updated?.previousResponsibleUserId,
           responsibleUserId: updated?.responsibleUserId,
@@ -459,6 +499,10 @@ export function routineRoutes(
       return;
     }
     await assertBoardCanAssignTasks(req, routine.companyId);
+    // A restore can make the agent run the routine and turn it on: on a routine it does not run, the
+    // person it acts for must be allowed to assign. (The service refuses any agent restore that would
+    // hand the routine to another agent.)
+    await assertAgentCanAssign(req, routine, routine.assigneeAgentId === req.actor.agentId);
     const result = await svc.restoreRevision(routine.id, req.params.revisionId as string, {
       agentId: req.actor.type === "agent" ? req.actor.agentId : null,
       userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
@@ -502,6 +546,7 @@ export function routineRoutes(
       return;
     }
     await assertBoardCanAssignTasks(req, routine.companyId);
+    await assertAgentCanAssign(req, routine, routine.assigneeAgentId === req.actor.agentId);
     const created = await svc.createTrigger(routine.id, req.body, {
       agentId: req.actor.type === "agent" ? req.actor.agentId : null,
       userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
@@ -543,6 +588,7 @@ export function routineRoutes(
       return;
     }
     await assertBoardCanAssignTasks(req, routine.companyId);
+    await assertAgentCanAssign(req, routine, routine.assigneeAgentId === req.actor.agentId);
     const updated = await svc.updateTrigger(trigger.id, req.body, {
       agentId: req.actor.type === "agent" ? req.actor.agentId : null,
       userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
@@ -585,6 +631,8 @@ export function routineRoutes(
       res.status(404).json({ error: "Routine trigger not found" });
       return;
     }
+    // Removing a schedule changes when the routine runs, like changing it.
+    await assertAgentCanAssign(req, routine, routine.assigneeAgentId === req.actor.agentId);
     const deleted = await svc.deleteTrigger(trigger.id, {
       agentId: req.actor.type === "agent" ? req.actor.agentId : null,
       userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
@@ -667,6 +715,8 @@ export function routineRoutes(
       return;
     }
     await assertBoardCanAssignTasks(req, routine.companyId);
+    // Starting another agent's routine starts that agent's work, as an assignment does.
+    await assertAgentCanAssign(req, routine, routine.assigneeAgentId === req.actor.agentId);
     const input = req.actor.type === "agent" ? { ...req.body, source: "manual" as const } : req.body;
     const run = await svc.runRoutine(routine.id, input, {
       agentId: req.actor.type === "agent" ? req.actor.agentId : null,

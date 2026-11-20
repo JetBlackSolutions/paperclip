@@ -5470,7 +5470,17 @@ registry.registerPath({
   path: "/api/companies/{companyId}/routines",
   tags: ["routines"],
   summary: "List routines in a company",
-  request: { params: z.object({ companyId: z.string() }) },
+  description: "Optional filters, all applied in the query: projectId, q (words in the title or description), status, assigneeAgentId, responsibleUserId. Filter instead of reading the whole list.",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    query: z.object({
+      projectId: z.string().optional(),
+      q: z.string().optional(),
+      status: z.enum(["active", "paused", "archived"]).optional(),
+      assigneeAgentId: z.string().optional(),
+      responsibleUserId: z.string().optional(),
+    }),
+  },
   responses: { 200: r.ok(), 401: r.unauthorized },
 });
 
