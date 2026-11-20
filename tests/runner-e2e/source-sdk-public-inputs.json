@@ -247,7 +247,7 @@
     "packages/shared/src/environment-support.test.ts": "82a4239763fbda9ff1ee507db4cedcba92aba14d",
     "packages/shared/src/environment-support.ts": "16784cf2f07dc905bdddbeaa4665b8f8639caad0",
     "packages/shared/src/execution-workspace-guards.ts": "5428546ab16ef5cb4d23edd914d0a15a83a94668",
-    "packages/shared/src/external-agent-guidance.ts": "d815fc60b170717f0fdcff61bc30c8a1289f7fcc",
+    "packages/shared/src/external-agent-guidance.ts": "10e1b0cd03bff52fe2e19e8242c9efead4a8e2ec",
     "packages/shared/src/external-objects-server.ts": "f323ba3e5e0b1a2ad415bdb5e0ca99bf9d449821",
     "packages/shared/src/external-objects.test.ts": "aa55bd97d918b3bfc8ea3b47526a71684ef61cbd",
     "packages/shared/src/external-objects.ts": "a9953c4e3f77f2bad03cb7832914ffc0b1a1266a",
