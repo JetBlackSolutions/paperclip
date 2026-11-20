@@ -18,9 +18,13 @@ function wakeCommentIds(context: Record<string, unknown>): string[] {
 async function resolveDirectedByPerson(db: Db, req: Request): Promise<boolean> {
   const actor = req.actor;
   if (actor.type !== "agent" || !actor.agentId || !actor.runId || !actor.onBehalfOfUserId || !isUuidLike(actor.runId)) return false;
+  // JBS fork: only a signed run token proves the run. A long-lived agent key takes its run id from the
+  // caller's X-Paperclip-Run-Id header, so a key holder could replay any past run the person directed.
+  if (actor.source !== "agent_jwt") return false;
   const personUserId = actor.onBehalfOfUserId;
   const [run] = await db
     .select({
+      status: heartbeatRuns.status,
       companyId: heartbeatRuns.companyId,
       issueId: heartbeatRuns.issueId,
       nativeIssueId: heartbeatRuns.nativeIssueId,
@@ -29,6 +33,8 @@ async function resolveDirectedByPerson(db: Db, req: Request): Promise<boolean> {
     .from(heartbeatRuns)
     .where(and(eq(heartbeatRuns.id, actor.runId), eq(heartbeatRuns.agentId, actor.agentId)));
   if (!run || (actor.companyId && run.companyId !== actor.companyId)) return false;
+  // JBS fork: a finished run directs nothing further.
+  if (run.status !== "running") return false;
 
   // The person wrote a message that woke this run.
   const commentIds = wakeCommentIds(asRecord(run.contextSnapshot));

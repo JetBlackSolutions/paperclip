@@ -31,14 +31,14 @@ function fakeDb(input: { run?: Record<string, unknown> | null; commentByPerson?:
 function agentRequest(overrides: Record<string, unknown> = {}) {
   return {
     actor: {
-      type: "agent", agentId, companyId, runId, onBehalfOfUserId: person,
+      type: "agent", agentId, companyId, runId, onBehalfOfUserId: person, source: "agent_jwt",
       onBehalfOfMemberships: [{ companyId, status: "active", membershipRole: "owner" }],
       ...overrides,
     },
   } as never;
 }
 
-const run = (contextSnapshot: Record<string, unknown> = {}) => ({ companyId, issueId: null, nativeIssueId: null, contextSnapshot });
+const run = (contextSnapshot: Record<string, unknown> = {}, status = "running") => ({ status, companyId, issueId: null, nativeIssueId: null, contextSnapshot });
 
 describe("agentPersonInCompany", () => {
   beforeEach(() => loadRunBoundIssue.mockReset().mockResolvedValue(null));
@@ -65,6 +65,19 @@ describe("agentPersonInCompany", () => {
     expect(await agentPersonInCompany(db, agentRequest({ onBehalfOfMemberships: [{ companyId: "other", status: "active" }] }), companyId)).toBeNull();
     expect(await agentPersonInCompany(db, agentRequest({ onBehalfOfUserId: null }), companyId)).toBeNull();
     expect(await agentPersonInCompany(db, { actor: { type: "board", userId: person } } as never, companyId)).toBeNull();
+  });
+
+  it("never trusts a run id from a long-lived agent key's header", async () => {
+    loadRunBoundIssue.mockResolvedValue({ createdByUserId: person });
+    const db = fakeDb({ run: run({ wakeCommentId: commentId }), commentByPerson: true });
+    expect(await agentPersonInCompany(db, agentRequest({ source: "agent_key", keyId: "key-1" }), companyId)).toBeNull();
+  });
+
+  it("refuses a run that is no longer running", async () => {
+    loadRunBoundIssue.mockResolvedValue({ createdByUserId: person });
+    for (const status of ["succeeded", "failed", "cancelled", "queued"]) {
+      expect(await agentPersonInCompany(fakeDb({ run: run({}, status) }), agentRequest(), companyId)).toBeNull();
+    }
   });
 
   it("refuses a run that belongs to another company", async () => {
