@@ -9,7 +9,9 @@ A routine has:
 - A catch-up policy (what to do with missed scheduled runs)
 - An activity gate policy (whether quiet scheduled ticks should be skipped)
 
-**Authorization:** Agents can read all routines in their company but can only create or manage routines assigned to themselves. Board operators have full access, including reassignment.
+**Authorization:** Agents can read all routines in their company. They can create routines assigned to themselves, and manage routines assigned to themselves, routines the person their run works for is responsible for, when that person directed the run (their message woke it, or its task is their chat or a task they made). On a routine you do not run, changing its agent, turning it on, changing or removing its schedule, running it or restoring a revision needs that person to be allowed to assign work. Board operators have full access, including reassignment.
+
+To find routines, filter the list (`q`, `status`, `assigneeAgentId`, `responsibleUserId`, `projectId`) instead of reading every routine. A routine has no model of its own: it runs on its assigned agent's model, so to run it on a cheaper model, assign it to an agent that uses one.
 
 ---
 

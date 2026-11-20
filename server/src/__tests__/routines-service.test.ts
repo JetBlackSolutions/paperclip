@@ -797,6 +797,26 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
     expect(allRoutines.map((entry) => entry.id)).toEqual(expect.arrayContaining([routine.id, otherRoutine.id]));
   });
 
+  it("filters listed routines by words, status and agent in the query", async () => {
+    const { companyId, agentId, projectId, routine, svc } = await seedFixture();
+    const base = {
+      projectId, goalId: null, parentIssueId: null, assigneeAgentId: agentId, priority: "medium" as const,
+      concurrencyPolicy: "coalesce_if_active" as const, catchUpPolicy: "skip_missed" as const, variables: [],
+    };
+    const daily = await svc.create(companyId, { ...base, title: "Daily skill audit", description: null, status: "active" }, {});
+    const weekly = await svc.create(companyId, { ...base, title: "Digest", description: "Weekly SKILL audit for 100% of agents", status: "paused" }, {});
+
+    const ids = async (filters: Parameters<typeof svc.list>[1]) => (await svc.list(companyId, filters)).map((entry) => entry.id).sort();
+    // Words match the title or the description, ignoring case.
+    expect(await ids({ query: "skill audit" })).toEqual([daily.id, weekly.id].sort());
+    expect(await ids({ query: "skill audit", status: "paused" })).toEqual([weekly.id]);
+    // % and _ are literal characters, not wildcards.
+    expect(await ids({ query: "100%" })).toEqual([weekly.id]);
+    expect(await ids({ query: "_" })).toEqual([]);
+    expect(await ids({ assigneeAgentId: agentId, query: "nothing like this" })).toEqual([]);
+    expect(await ids({ assigneeAgentId: agentId })).toEqual(expect.arrayContaining([routine.id, daily.id, weekly.id]));
+  });
+
   it("does not reveal folders owned by another company", async () => {
     const { companyId, agentId, projectId, svc } = await seedFixture();
     const otherCompanyId = randomUUID();
