@@ -1,3 +1,4 @@
+import type { AdapterRuntimeMcpServer } from "@paperclipai/adapter-utils";
 import { isOpenRouterUrl, openRouterAttributionHeaders } from "@paperclipai/adapter-utils/openrouter-attribution";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -94,6 +95,42 @@ function parseConfiguredModelRef(raw: unknown): { provider: string; model: strin
   return { provider: trimmed.slice(0, slash), model: trimmed.slice(slash + 1) };
 }
 
+function openCodeMcpServerKey(name: string): string {
+  const key = name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
+  return key || "paperclip";
+}
+
+/**
+ * OpenCode `mcp` entries for the run's Paperclip-managed MCP servers (task tools,
+ * runtime connection tools, and the agent's assigned app connections). OpenCode
+ * prefixes each tool with its server key, so keys are reduced to the characters
+ * it keeps in tool names and made unique the same way the Claude adapter does.
+ */
+export function buildPaperclipOpenCodeMcpEntries(
+  servers: readonly AdapterRuntimeMcpServer[],
+): Record<string, Record<string, unknown>> {
+  const entries: Record<string, Record<string, unknown>> = {};
+  for (const server of servers) {
+    const base = openCodeMcpServerKey(server.name);
+    // Connection ids can carry a kind prefix ("assignment:<digest>"); the tail is the distinguishing part.
+    const discriminator = openCodeMcpServerKey(server.connectionId.split(":").pop() ?? server.connectionId).slice(0, 8);
+    let key = base;
+    if (key in entries) key = `${base}-${discriminator}`;
+    let suffix = 2;
+    while (key in entries) {
+      key = `${base}-${discriminator}-${suffix}`;
+      suffix += 1;
+    }
+    entries[key] = {
+      type: "remote",
+      url: server.url,
+      headers: { Authorization: `Bearer ${server.token}` },
+      enabled: true,
+    };
+  }
+  return entries;
+}
+
 async function readJsonObject(filepath: string): Promise<Record<string, unknown>> {
   try {
     const raw = await fs.readFile(filepath, "utf8");
@@ -109,6 +146,8 @@ export async function prepareOpenCodeRuntimeConfig(input: {
   config: Record<string, unknown>;
   targetIsRemote?: boolean;
   sandboxToolOomPreference?: boolean;
+  /** Paperclip-managed MCP servers for this run; their bearer tokens are written only to the private runtime config. */
+  mcpServers?: readonly AdapterRuntimeMcpServer[];
 }): Promise<PreparedOpenCodeRuntimeConfig> {
   const skipPermissions = asBoolean(input.config.dangerouslySkipPermissions, true);
 
@@ -229,7 +268,24 @@ export async function prepareOpenCodeRuntimeConfig(input: {
     nextConfig.small_model = smallModel;
     notes.push(`Pinned OpenCode small_model to ${smallModel}.`);
   }
+
+  // Deliver the run's Paperclip-managed MCP servers the way the Claude and Codex
+  // adapters do. Operator-defined servers stay; a managed key wins on collision.
+  const managedMcpEntries = buildPaperclipOpenCodeMcpEntries(input.mcpServers ?? []);
+  const managedMcpKeys = Object.keys(managedMcpEntries);
+  if (managedMcpKeys.length > 0) {
+    nextConfig.mcp = {
+      ...(isPlainObject(existingConfig.mcp) ? existingConfig.mcp : {}),
+      ...managedMcpEntries,
+    };
+    notes.push(
+      `Injected ${managedMcpKeys.length} Paperclip-managed MCP server(s) into the runtime OpenCode config: ${managedMcpKeys.join(", ")}.`,
+    );
+  }
   await fs.writeFile(runtimeConfigPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
+  // The runtime config can carry run-scoped bearer tokens; keep it private even
+  // when it was copied from a world-readable operator config.
+  await fs.chmod(runtimeConfigPath, 0o600);
   if (input.sandboxToolOomPreference) {
     try {
       await installSandboxToolMemoryPreference(runtimeConfigDir);
