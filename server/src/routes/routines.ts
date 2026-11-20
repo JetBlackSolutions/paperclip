@@ -131,18 +131,11 @@ export function routineRoutes(
 
   /**
    * The person an agent acts for on this routine: the person who directed its
-   * run, when that person is responsible for the routine or is a company owner
-   * or admin (who may change any routine). Null otherwise.
-   *
-   * JBS fork: upstream #22274 allows only the responsible person. The owner and
-   * admin case follows upstream's own rule for responsibilities
-   * (agentActsForResponsibilityOwner): an agent may change what the person
-   * who directed it could.
+   * run, when that person is responsible for the routine. Null otherwise.
    */
   async function agentActsForRoutinePerson(req: Request, routine: { companyId: string; responsibleUserId: string | null }) {
     const person = await agentPersonInCompany(db, req, routine.companyId);
-    if (!person) return null;
-    return routine.responsibleUserId === person.userId || person.role === "owner" || person.role === "admin" ? person.userId : null;
+    return person && routine.responsibleUserId === person.userId ? person.userId : null;
   }
 
   /**

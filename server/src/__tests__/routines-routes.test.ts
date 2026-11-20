@@ -608,21 +608,12 @@ describe("routine routes", () => {
     expect((await request(forPerson).patch(`/api/routines/${routineId}`).send({ assigneeAgentId: projectId })).status).toBe(200);
     expect(mockAccessService.canUser).toHaveBeenCalledWith(companyId, "person-1", "tasks:assign");
 
-    // An agent working for another member may not.
+    // An agent working for someone else may not.
     const forOther = await createApp({
       type: "agent", agentId, companyId, onBehalfOfUserId: "person-2",
-      onBehalfOfMemberships: [{ companyId, membershipRole: "member", status: "active" }],
+      onBehalfOfMemberships: [{ companyId, membershipRole: "owner", status: "active" }],
     });
     expect((await request(forOther).patch(`/api/routines/${routineId}`).send({ title: "x" })).status).toBe(403);
-
-    // JBS fork: an agent working for a company owner or admin may, as that person could.
-    for (const membershipRole of ["owner", "admin"]) {
-      const forOwner = await createApp({
-        type: "agent", agentId, companyId, onBehalfOfUserId: "person-2",
-        onBehalfOfMemberships: [{ companyId, membershipRole, status: "active" }],
-      });
-      expect((await request(forOwner).patch(`/api/routines/${routineId}`).send({ title: "x" })).status).toBe(200);
-    }
   });
 
   it("prevents even the assigned agent from transferring routine responsibility", async () => {
