@@ -122,6 +122,15 @@ describe("OpenCode closing reply", () => {
     expect(parseOpenCodeJsonl(stdout).finalResponse).toBe("Part one.\n\nPart two.");
   });
 
+  it("takes the text of a last step that was left open, when it called no tool", () => {
+    // Some OpenCode versions exit cleanly without the last step_finish.
+    expect(parseOpenCodeJsonl(toolRun.slice(0, 9).join("\n")).finalResponse).toBe(answer);
+    // An open step that already called a tool is still working.
+    expect(parseOpenCodeJsonl(toolRun.slice(0, 3).join("\n")).finalResponse).toBeNull();
+    // A new step replaces an earlier closing reply.
+    expect(parseOpenCodeJsonl([...toolRun, row("step_start")].join("\n")).finalResponse).toBeNull();
+  });
+
   it("reports no closing reply when the run did not end on one", () => {
     // Stopped mid-work, cut off by the length limit, an empty closing step, and a stream with no step events.
     expect(parseOpenCodeJsonl(toolRun.slice(0, 7).join("\n")).finalResponse).toBeNull();
