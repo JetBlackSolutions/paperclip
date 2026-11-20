@@ -123,6 +123,15 @@ export function externalRunnerExitMessage(result: Awaited<RunnerProcessHandle["c
   return `${commandPrefix}_runner_process_exited_recovery_required: code=${result.code} signal=${result.signal}${reason ? ` reason=${reason}` : ""}`;
 }
 
+/**
+ * Completion feedback is written for providers whose final reply Paperclip
+ * reads. An external provider's reply is invisible to Paperclip, and its turn
+ * stays open until it sends its finish command, so say that explicitly.
+ */
+export function externalCompletionFeedback(feedback: string, codec: Pick<ExternalProviderCodec, "completionGuidance">): string {
+  return `${feedback} Paperclip shows the accepted report's summary as your reply. Now submit this exact report with ${codec.completionGuidance} to end the turn.`;
+}
+
 export function runnerDisconnectDiagnostic(core: Pick<DurablePrpControlPlane, "runnerDisconnectedForMs">): string {
   const disconnectedMs = core.runnerDisconnectedForMs();
   return `disconnectedMs=${disconnectedMs ?? "none"}`;
@@ -192,7 +201,10 @@ class RunnerdExternalSession implements HarnessSession {
         if (!result.ok || (call.operationId === "paperclip_block") !== (result.ok && result.result.reportedWorkDisposition === "blocked")) {
           return { result: { error: "Invalid completion report. Use the admitted completion contract and the correct completion tool." }, isError: true };
         }
-        try { return { result: { accepted: true, completionReport: result.result, feedback: await o.completionFeedback?.(result.result) ?? "Completion accepted; finish the external turn." } }; }
+        try {
+          const feedback = await o.completionFeedback?.(result.result) ?? "Completion accepted.";
+          return { result: { accepted: true, completionReport: result.result, feedback: externalCompletionFeedback(feedback, this.codec) } };
+        }
         catch (error) { return { result: { error: error instanceof Error ? error.message : "Completion rejected" }, isError: true }; }
       }
       if (!o.dynamicToolHandler) throw new Error("dot_semantic_authority_unavailable");

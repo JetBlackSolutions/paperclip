@@ -84,6 +84,12 @@ pub type DotCommandExecutor = ExternalCommandExecutor;
 const MAX_STATE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_OPERATIONS: usize = 4096;
 const MAX_EVENTS: usize = 8192;
+/// How long an external provider has to send `finish` after Paperclip accepts
+/// its `paperclip_finish` or `paperclip_block` report. Once a report is
+/// accepted the turn takes no more tools, so the result cannot change. Some
+/// providers never send `finish`; without this bound the run stays open until
+/// the assignment expires and the accepted report is discarded as a failure.
+const ACCEPTED_COMPLETION_FINISH_GRACE_MS: u64 = 3 * 60 * 1000;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -152,6 +158,8 @@ struct State {
     completion: Option<Value>,
     #[serde(default)]
     completion_input: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    completion_accepted_at_unix_ms: Option<u64>,
     events: VecDeque<PolledEvent>,
     next_event: u64,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -376,6 +384,37 @@ impl State {
             "assignmentRevision":self.assignment_revision})
     }
 
+    /// True while a running turn holds an accepted report that the provider
+    /// has not finished.
+    fn holds_unfinished_accepted_completion(&self) -> bool {
+        self.lifecycle == "running" && self.completion.is_some()
+    }
+
+    /// True when nothing but the provider's `finish` is outstanding: no tool
+    /// call or runtime input is still open. The provider's own `finish` has
+    /// the same requirement.
+    fn only_finish_outstanding(&self) -> bool {
+        self.tools.pending_calls().next().is_none()
+            && self.runtime_inputs.values().all(|input| input.consumed)
+    }
+
+    /// Ends the turn with the report Paperclip already accepted. `item_id`
+    /// names the final-answer item that carries the report's summary.
+    fn close_with_accepted_completion(&mut self, item_id: &str) -> Result<(), DurableRunnerError> {
+        let result = self
+            .completion
+            .clone()
+            .ok_or_else(|| invalid("Dot completion is missing"))?;
+        self.lifecycle = "completed".to_owned();
+        self.tools
+            .settle_turn("completed")
+            .map_err(|e| invalid(e.to_string()))?;
+        self.push("run.result.proposed", result.clone())?;
+        self.push("item.completed", json!({"provider":self.descriptor.kind,"item":{"id":item_id,"type":"agentMessage","text":result["summary"],"phase":"final_answer"}}))?;
+        self.push("turn.completed", json!({"provider":self.descriptor.kind,"providerTurnId":self.turn_id,"status":"completed"}))?;
+        self.push("run.terminal", json!({"schema":"paperclip.prp.terminal.v1","turnTerminalState":"completed","runTerminalState":"succeeded","reportedWorkDisposition":result["reportedWorkDisposition"]}))
+    }
+
     fn settle(&mut self, id: &str, outcome: Value) -> Result<(), DurableRunnerError> {
         self.operations
             .get_mut(id)
@@ -524,6 +563,7 @@ impl ExternalCommandExecutor {
                 operations: BTreeMap::new(),
                 completion: None,
                 completion_input: None,
+                completion_accepted_at_unix_ms: None,
                 events: VecDeque::new(),
                 next_event: 1,
                 runtime_inputs: BTreeMap::new(),
@@ -703,19 +743,7 @@ impl ExternalCommandExecutor {
                 {
                     return Err(invalid("Dot must successfully invoke paperclip_finish or paperclip_block with this result first"));
                 }
-                let result = state
-                    .completion
-                    .clone()
-                    .ok_or_else(|| invalid("Dot completion is missing"))?;
-                state.lifecycle = "completed".to_owned();
-                state
-                    .tools
-                    .settle_turn("completed")
-                    .map_err(|e| invalid(e.to_string()))?;
-                state.push("run.result.proposed", result.clone())?;
-                state.push("item.completed", json!({"provider":state.descriptor.kind,"item":{"id":id,"type":"agentMessage","text":result["summary"],"phase":"final_answer"}}))?;
-                state.push("turn.completed", json!({"provider":state.descriptor.kind,"providerTurnId":state.turn_id,"status":"completed"}))?;
-                state.push("run.terminal", json!({"schema":"paperclip.prp.terminal.v1","turnTerminalState":"completed","runTerminalState":"succeeded","reportedWorkDisposition":result["reportedWorkDisposition"]}))?;
+                state.close_with_accepted_completion(&id)?;
                 json!({"status":"completed"})
             }
             _ => return Err(invalid("Dot action is unsupported")),
@@ -795,6 +823,9 @@ impl ExternalCommandExecutor {
             }
             state.completion = Some(completion);
             state.completion_input = Some(accepted_input);
+            state
+                .completion_accepted_at_unix_ms
+                .get_or_insert(crate::durable::current_unix_ms()?);
         }
         let outcome =
             json!({"status":"completed","isError":result.is_error,"result":result.result});
@@ -983,6 +1014,35 @@ impl CommandExecutor for ExternalCommandExecutor {
     fn poll_events(&mut self) -> Result<Vec<PolledEvent>, DurableRunnerError> {
         self.restore()?;
         let now = crate::durable::current_unix_ms()?;
+        // An accepted report is final. Close the turn with it when the provider
+        // does not send `finish` within the grace period. The grace close waits
+        // for calls still in flight, as the provider's own `finish` does. At
+        // expiry the report closes the turn even with calls in flight, because
+        // fencing would otherwise discard it; `settle_turn` keeps those pending
+        // effects and still accepts their late results.
+        if let Some(state) = self.state.as_mut() {
+            if state.holds_unfinished_accepted_completion() {
+                let prior = state.clone();
+                // State written before this field existed starts its grace now.
+                let accepted_at = *state.completion_accepted_at_unix_ms.get_or_insert(now);
+                let grace_elapsed =
+                    now >= accepted_at.saturating_add(ACCEPTED_COMPLETION_FINISH_GRACE_MS);
+                let due = (grace_elapsed && state.only_finish_outstanding())
+                    || now >= state.descriptor.expires_at_unix_ms;
+                let item_id = format!("{}-accepted-completion", state.turn_id);
+                let changed = prior.completion_accepted_at_unix_ms.is_none() || due;
+                let outcome = if due {
+                    state.close_with_accepted_completion(&item_id)
+                } else {
+                    Ok(())
+                };
+                if let Err(error) = outcome.and_then(|_| if changed { self.save() } else { Ok(()) })
+                {
+                    self.state = Some(prior);
+                    return Err(error);
+                }
+            }
+        }
         let expired = self.state.as_ref().is_some_and(|s| {
             (s.lifecycle == "offered" && now >= s.descriptor.accept_by_unix_ms)
                 || (s.lifecycle == "running" && now >= s.descriptor.expires_at_unix_ms)
@@ -1391,6 +1451,162 @@ mod tests {
                 .count(),
             1
         );
+    }
+    fn accepted_report(e: &mut DotCommandExecutor) -> Value {
+        let result = json!({"schema":"paperclip.run_result.v1","reportedWorkDisposition":"blocked","summary":"Routine edit was refused",
+            "completionClaim":{"contractRevision":"contract-1","objectiveSatisfied":false,"criteria":[{"criterionId":"criterion-1","status":"not_satisfied","evidenceRefs":[]}],
+                "remainingWork":[{"description":"Change the routine cadence","blocksCompletion":true}]},
+            "blocker":{"reasonCode":"permission_denied","owner":{"kind":"user","name":"Ryan"},"unblockAction":"Grant routine access","scope":"current_track"},
+            "evidence":[],"verification":[],"attentionRequests":[],"artifacts":[]});
+        call(
+            e,
+            "external_provider.operation",
+            operation(
+                "completion-1",
+                "tool",
+                json!({"name":"paperclip_finish","arguments":result}),
+            ),
+        );
+        call(
+            e,
+            "semantic_tool.result",
+            json!({"callId":"completion-1","operationId":"paperclip_finish","result":{"accepted":true},"isError":false}),
+        );
+        result
+    }
+    fn count(events: &[PolledEvent], kind: &str) -> usize {
+        events
+            .iter()
+            .filter(|event| event.event_type == kind)
+            .count()
+    }
+    #[test]
+    fn an_accepted_report_closes_the_turn_when_the_provider_never_finishes() {
+        let dir = TestDirectory::new();
+        let mut e = prepared(dir.path());
+        accept(&mut e);
+        accepted_report(&mut e);
+        // Inside the grace period the provider may still finish on its own.
+        assert_eq!(count(&e.poll_events().unwrap(), "run.terminal"), 0);
+        let state = e.state.as_mut().unwrap();
+        let accepted_at = state
+            .completion_accepted_at_unix_ms
+            .expect("acceptance time recorded");
+        state.completion_accepted_at_unix_ms =
+            Some(accepted_at - ACCEPTED_COMPLETION_FINISH_GRACE_MS - 1);
+        let events = e.poll_events().unwrap();
+        assert_eq!(count(&events, "run.result.proposed"), 1);
+        assert_eq!(count(&events, "turn.completed"), 1);
+        assert_eq!(count(&events, "turn.failed"), 0);
+        let terminal = events
+            .iter()
+            .find(|e| e.event_type == "run.terminal")
+            .unwrap();
+        assert_eq!(terminal.payload["runTerminalState"], "succeeded");
+        assert_eq!(terminal.payload["reportedWorkDisposition"], "blocked");
+        let answer = events
+            .iter()
+            .find(|e| {
+                e.event_type == "item.completed" && e.payload["item"]["phase"] == "final_answer"
+            })
+            .unwrap();
+        assert_eq!(answer.payload["item"]["text"], "Routine edit was refused");
+        // Closing is persisted and happens once.
+        drop(e);
+        let mut recovered = DotCommandExecutor::with_runner_config(dir.path(), &config(dir.path()));
+        assert_eq!(count(&recovered.poll_events().unwrap(), "run.terminal"), 1);
+        assert_eq!(recovered.state.as_ref().unwrap().lifecycle, "completed");
+    }
+    #[test]
+    fn a_provider_finish_inside_the_grace_period_closes_the_turn_once() {
+        let dir = TestDirectory::new();
+        let mut e = prepared(dir.path());
+        accept(&mut e);
+        let result = accepted_report(&mut e);
+        call(
+            &mut e,
+            "external_provider.operation",
+            operation("finish-1", "finish", json!({"result":result})),
+        );
+        let state = e.state.as_mut().unwrap();
+        state.completion_accepted_at_unix_ms = Some(0);
+        assert_eq!(count(&e.poll_events().unwrap(), "run.terminal"), 1);
+    }
+    #[test]
+    fn expiry_keeps_an_accepted_report_instead_of_failing_the_run() {
+        let dir = TestDirectory::new();
+        let mut e = prepared(dir.path());
+        accept(&mut e);
+        accepted_report(&mut e);
+        let now = crate::durable::current_unix_ms().unwrap();
+        let state = e.state.as_mut().unwrap();
+        state.descriptor.accept_by_unix_ms = now - 2;
+        state.descriptor.expires_at_unix_ms = now - 1;
+        let events = e.poll_events().unwrap();
+        assert_eq!(count(&events, "turn.failed"), 0);
+        assert_eq!(count(&events, "turn.completed"), 1);
+        let terminal = events
+            .iter()
+            .find(|e| e.event_type == "run.terminal")
+            .unwrap();
+        assert_eq!(terminal.payload["runTerminalState"], "succeeded");
+    }
+    #[test]
+    fn a_call_in_flight_delays_the_grace_close_but_not_the_expiry_close() {
+        let dir = TestDirectory::new();
+        let mut e = prepared(dir.path());
+        accept(&mut e);
+        // A parallel call starts before the report and is still in flight.
+        call(
+            &mut e,
+            "external_provider.operation",
+            operation(
+                "save-1",
+                "tool",
+                json!({"name":"save_report","arguments":{}}),
+            ),
+        );
+        accepted_report(&mut e);
+        let state = e.state.as_mut().unwrap();
+        state.completion_accepted_at_unix_ms = Some(0);
+        assert_eq!(count(&e.poll_events().unwrap(), "run.terminal"), 0);
+        let now = crate::durable::current_unix_ms().unwrap();
+        let state = e.state.as_mut().unwrap();
+        state.descriptor.accept_by_unix_ms = now - 2;
+        state.descriptor.expires_at_unix_ms = now - 1;
+        let events = e.poll_events().unwrap();
+        assert_eq!(count(&events, "turn.failed"), 0);
+        assert_eq!(count(&events, "run.result.proposed"), 1);
+        let terminal = events
+            .iter()
+            .find(|e| e.event_type == "run.terminal")
+            .unwrap();
+        assert_eq!(terminal.payload["runTerminalState"], "succeeded");
+        // The in-flight call keeps its pending effect and still takes its late result.
+        call(
+            &mut e,
+            "semantic_tool.result",
+            json!({"callId":"save-1","operationId":"save_report","result":{"saved":true},"isError":false}),
+        );
+    }
+    #[test]
+    fn an_open_tool_call_still_holds_the_turn_open() {
+        let dir = TestDirectory::new();
+        let mut e = prepared(dir.path());
+        accept(&mut e);
+        call(
+            &mut e,
+            "external_provider.operation",
+            operation(
+                "save-1",
+                "tool",
+                json!({"name":"save_report","arguments":{}}),
+            ),
+        );
+        // No report was accepted, so neither the grace period nor anything else
+        // closes this turn.
+        assert!(e.state.as_ref().unwrap().completion.is_none());
+        assert_eq!(count(&e.poll_events().unwrap(), "run.terminal"), 0);
     }
     #[test]
     fn normalized_completion_survives_restart_and_accepts_the_original_report() {
