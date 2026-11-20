@@ -2205,9 +2205,9 @@
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:lifecycle:16",
+      "id": "skill:skills/paperclip/references/routines.md:lifecycle:18",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md:16",
+      "sourceAnchor": "skills/paperclip/references/routines.md:18",
       "title": "Lifecycle",
       "expectedSemantics": "Skill guidance headed “Lifecycle”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2216,13 +2216,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/routines.md:16"
+        "skill:skills/paperclip/references/routines.md:18"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:creating-a-routine:27",
+      "id": "skill:skills/paperclip/references/routines.md:creating-a-routine:29",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md:27",
+      "sourceAnchor": "skills/paperclip/references/routines.md:29",
       "title": "Creating a Routine",
       "expectedSemantics": "Skill guidance headed “Creating a Routine”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2231,13 +2231,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/routines.md:27"
+        "skill:skills/paperclip/references/routines.md:29"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:concurrency-policies:64",
+      "id": "skill:skills/paperclip/references/routines.md:concurrency-policies:66",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md:64",
+      "sourceAnchor": "skills/paperclip/references/routines.md:66",
       "title": "Concurrency Policies",
       "expectedSemantics": "Skill guidance headed “Concurrency Policies”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2246,13 +2246,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/routines.md:64"
+        "skill:skills/paperclip/references/routines.md:66"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:catch-up-policies:76",
+      "id": "skill:skills/paperclip/references/routines.md:catch-up-policies:78",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md:76",
+      "sourceAnchor": "skills/paperclip/references/routines.md:78",
       "title": "Catch-Up Policies",
       "expectedSemantics": "Skill guidance headed “Catch-Up Policies”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2261,13 +2261,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/routines.md:76"
+        "skill:skills/paperclip/references/routines.md:78"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:activity-gated-scheduled-runs:87",
+      "id": "skill:skills/paperclip/references/routines.md:activity-gated-scheduled-runs:89",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md:87",
+      "sourceAnchor": "skills/paperclip/references/routines.md:89",
       "title": "Activity-Gated Scheduled Runs",
       "expectedSemantics": "Skill guidance headed “Activity-Gated Scheduled Runs”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2276,13 +2276,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/routines.md:87"
+        "skill:skills/paperclip/references/routines.md:89"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:example-skip-quiet-nights:107",
+      "id": "skill:skills/paperclip/references/routines.md:example-skip-quiet-nights:109",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md:107",
+      "sourceAnchor": "skills/paperclip/references/routines.md:109",
       "title": "Example: skip quiet nights",
       "expectedSemantics": "Skill guidance headed “Example: skip quiet nights”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2291,13 +2291,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/routines.md:107"
+        "skill:skills/paperclip/references/routines.md:109"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:adding-triggers:126",
+      "id": "skill:skills/paperclip/references/routines.md:adding-triggers:128",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md:126",
+      "sourceAnchor": "skills/paperclip/references/routines.md:128",
       "title": "Adding Triggers",
       "expectedSemantics": "Skill guidance headed “Adding Triggers”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2306,13 +2306,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/routines.md:126"
+        "skill:skills/paperclip/references/routines.md:128"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:schedule-cron:136",
+      "id": "skill:skills/paperclip/references/routines.md:schedule-cron:138",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md:136",
+      "sourceAnchor": "skills/paperclip/references/routines.md:138",
       "title": "Schedule (cron)",
       "expectedSemantics": "Skill guidance headed “Schedule (cron)”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2321,13 +2321,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/routines.md:136"
+        "skill:skills/paperclip/references/routines.md:138"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:webhook:150",
+      "id": "skill:skills/paperclip/references/routines.md:webhook:152",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md:150",
+      "sourceAnchor": "skills/paperclip/references/routines.md:152",
       "title": "Webhook",
       "expectedSemantics": "Skill guidance headed “Webhook”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2336,13 +2336,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/routines.md:150"
+        "skill:skills/paperclip/references/routines.md:152"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:api-manual-only:167",
+      "id": "skill:skills/paperclip/references/routines.md:api-manual-only:169",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md:167",
+      "sourceAnchor": "skills/paperclip/references/routines.md:169",
       "title": "API (manual only)",
       "expectedSemantics": "Skill guidance headed “API (manual only)”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2351,13 +2351,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/routines.md:167"
+        "skill:skills/paperclip/references/routines.md:169"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:updating-and-deleting-triggers:179",
+      "id": "skill:skills/paperclip/references/routines.md:updating-and-deleting-triggers:181",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md:179",
+      "sourceAnchor": "skills/paperclip/references/routines.md:181",
       "title": "Updating and Deleting Triggers",
       "expectedSemantics": "Skill guidance headed “Updating and Deleting Triggers”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2366,13 +2366,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/routines.md:179"
+        "skill:skills/paperclip/references/routines.md:181"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:manual-run:196",
+      "id": "skill:skills/paperclip/references/routines.md:manual-run:198",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md:196",
+      "sourceAnchor": "skills/paperclip/references/routines.md:198",
       "title": "Manual Run",
       "expectedSemantics": "Skill guidance headed “Manual Run”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2381,13 +2381,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/routines.md:196"
+        "skill:skills/paperclip/references/routines.md:198"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:updating-a-routine:212",
+      "id": "skill:skills/paperclip/references/routines.md:updating-a-routine:214",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md:212",
+      "sourceAnchor": "skills/paperclip/references/routines.md:214",
       "title": "Updating a Routine",
       "expectedSemantics": "Skill guidance headed “Updating a Routine”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2396,13 +2396,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/routines.md:212"
+        "skill:skills/paperclip/references/routines.md:214"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:reading-routines-and-runs:223",
+      "id": "skill:skills/paperclip/references/routines.md:reading-routines-and-runs:225",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md:223",
+      "sourceAnchor": "skills/paperclip/references/routines.md:225",
       "title": "Reading Routines and Runs",
       "expectedSemantics": "Skill guidance headed “Reading Routines and Runs”.",
       "primaryDisposition": "optional_agent_tool",
@@ -2411,7 +2411,7 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/routines.md:223"
+        "skill:skills/paperclip/references/routines.md:225"
       ]
     },
     {
