@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { RunnerdDotDriver, externalRunnerExitMessage, type RunnerdDotDriverOptions } from "./runnerd-dot-driver.js";
+import { DOT_EXTERNAL_CODEC, GROK_EXTERNAL_CODEC, externalCompletionFeedback } from "../external/runnerd-external-driver.js";
+import { nativeSystemInstructions } from "../../backends/runtime-context.js";
 import { describeRunnerdNativeSessionBackend } from "../../backends/codex-native-backend.js";
 import { createNativeSessionBackend } from "../../backends/native-backend-factory.js";
 import * as controlPlane from "../../control-plane/durable-prp-control-plane.js";
@@ -275,5 +277,31 @@ describe("external Runner failure diagnostics", () => {
     expect(recognized).toContain("reason=lease_expired_requires_bootstrap");
     expect(recognized).not.toContain("qualification-secret");
     expect(recognized).not.toContain("private.example");
+  });
+});
+
+describe("external provider chat and finish guidance", () => {
+  it("tells a Dot to narrate in the task chat and to finish once its report is accepted", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dot-driver-guidance-"));
+    try {
+      await writeFile(join(root, "AGENTS.md"), "Use only the synthetic counter.");
+      const dot = nativeSystemInstructions(execution(root, "openai_dot"));
+      expect(dot).toContain("only what you send with paperclip_dot_progress");
+      expect(dot).toContain("Before your first Paperclip operation");
+      expect(dot).toContain("call paperclip_dot_finish with the same result");
+      // Grok has no progress tool, so it must not be told to use one.
+      const grok = nativeSystemInstructions(execution(root, "grok_bot"));
+      expect(grok).not.toMatch(/paperclip_(dot|grok)_progress/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("names the provider's own finish command after an accepted report", () => {
+    const feedback = "Blocker report accepted. Explain why work cannot continue.";
+    expect(externalCompletionFeedback(feedback, DOT_EXTERNAL_CODEC)).toBe(
+      `${feedback} Paperclip shows the accepted report's summary as your reply. Now submit this exact report with paperclip_dot_finish to end the turn.`,
+    );
+    expect(externalCompletionFeedback(feedback, GROK_EXTERNAL_CODEC)).toContain("with paperclip_grok_finish to end the turn");
   });
 });
