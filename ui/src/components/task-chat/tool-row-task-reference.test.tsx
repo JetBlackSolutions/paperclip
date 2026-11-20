@@ -66,6 +66,12 @@ describe("tool rows never show raw task UUIDs", () => {
     expect(summarizeToolInput({ issueId: TASK_UUID, includeComments: true }) ?? "").not.toContain(TASK_UUID);
   });
 
+  it("drops blank arguments instead of showing a bare key", () => {
+    // A redacted call_api input used to render as "Ran Call API reference:".
+    expect(summarizeToolInput({ reference: "" })).toBeUndefined();
+    expect(summarizeToolInput({ reference: "   ", limit: 5 })).toBe("limit: 5");
+  });
+
   it("shows the task identifier in place of its UUID", () => {
     queryClient.setQueryData(queryKeys.issues.detail(TASK_UUID), {
       id: TASK_UUID, identifier: "PIX-3", title: "Create printable cake menu and logo",
