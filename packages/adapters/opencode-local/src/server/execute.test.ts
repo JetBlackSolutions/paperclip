@@ -82,6 +82,36 @@ describe("OpenCode local skill injection", () => {
     expect(prompt).not.toContain("Create child issues");
   });
 
+  it("marks the closing reply as final so the server posts it, and never for a failed run", async () => {
+    const commandPath = path.join(configHome, "fake-opencode-final");
+    await fs.writeFile(commandPath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const row = (type: string, part: Record<string, unknown> = {}) => JSON.stringify({ type, sessionID: "s1", part });
+    const stdout = [
+      row("step_start"), row("text", { text: "I'll check access now." }), row("tool_use", { tool: "bash", state: { status: "completed" } }),
+      row("step_finish", { reason: "tool-calls" }),
+      row("step_start"), row("text", { text: "Yes, I can access it." }), row("step_finish", { reason: "stop" }),
+    ].join("\n");
+    const run = (result: Record<string, unknown>) => {
+      runProcessMock.mockReset().mockResolvedValue(probeResult(result));
+      return execute({
+        runId: "run-final-reply",
+        agent: { id: "agent-1", companyId: "company-1", name: "OpenCode", adapterType: "opencode_local", adapterConfig: {} },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: { command: commandPath, cwd: configHome, model: "openai/gpt-5", env: { OPENCODE_ALLOW_ALL_MODELS: "1" } },
+        context: createPromptContextFixture(),
+        onLog: async () => {},
+        onMeta: async () => {},
+      });
+    };
+    const ok = await run({ stdout });
+    expect(ok.resultJson).toMatchObject({ finalResponseDisposition: "final", finalResponse: "Yes, I can access it." });
+    expect(ok.summary).toBe("I'll check access now.\n\nYes, I can access it.");
+    const failed = await run({ stdout, exitCode: 1 });
+    expect(failed.resultJson).not.toHaveProperty("finalResponseDisposition");
+    const unmarked = await run({ stdout: row("text", { text: "done" }) });
+    expect(unmarked.resultJson).not.toHaveProperty("finalResponseDisposition");
+  });
+
   it("delivers assignment context on an ordinary task turn and rebuilds it after resume fallback", async () => {
     const commandPath = path.join(configHome, "fake-opencode-context");
     await fs.writeFile(commandPath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });

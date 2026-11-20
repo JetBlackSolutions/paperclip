@@ -27,6 +27,14 @@ export function parseOpenCodeJsonl(stdout: string) {
 export function createOpenCodeJsonlParser() {
   let sessionId: string | null = null;
   const messages: string[] = [];
+  // Text of the step in progress. A step that finishes with reason "stop" is
+  // the model's closing reply; steps that end in tool calls are narration.
+  let stepMessages: string[] = [];
+  let finalResponse: string | null = null;
+  // Some OpenCode versions exit cleanly without the last step_finish. A step
+  // left open with text and no tool call is then the closing reply.
+  let stepOpen = false;
+  let stepUsedTool = false;
   const errors: string[] = [];
   const toolErrors: string[] = [];
   const usage = {
@@ -52,15 +60,30 @@ export function createOpenCodeJsonlParser() {
 
       const type = asString(event.type, "");
 
+      if (type === "step_start") {
+        stepMessages = [];
+        finalResponse = null;
+        stepOpen = true;
+        stepUsedTool = false;
+        continue;
+      }
+
       if (type === "text") {
         const part = parseObject(event.part);
         const text = asString(part.text, "").trim();
-        if (text) messages.push(text);
+        if (text) {
+          messages.push(text);
+          stepMessages.push(text);
+        }
         continue;
       }
 
       if (type === "step_finish") {
         const part = parseObject(event.part);
+        // Only the latest step counts: work after a "stop" step replaces it.
+        finalResponse = asString(part.reason, "") === "stop" ? stepMessages.join("\n\n").trim() || null : null;
+        stepMessages = [];
+        stepOpen = false;
         const tokens = parseObject(part.tokens);
         const cache = parseObject(tokens.cache);
         const counts = [tokens.input, tokens.output, cache.read === undefined ? 0 : cache.read, cache.write === undefined ? 0 : cache.write, tokens.reasoning === undefined ? 0 : tokens.reasoning];
@@ -77,6 +100,7 @@ export function createOpenCodeJsonlParser() {
       }
 
       if (type === "tool_use") {
+        stepUsedTool = true;
         const part = parseObject(event.part);
         const state = parseObject(part.state);
         if (asString(state.status, "") === "error") {
@@ -96,6 +120,8 @@ export function createOpenCodeJsonlParser() {
     return {
       sessionId,
       summary: messages.join("\n\n").trim(),
+      /** The closing reply alone, when the stream ended on a reply. Null otherwise. Use it only for a clean exit. */
+      finalResponse: finalResponse ?? (stepOpen && !stepUsedTool ? stepMessages.join("\n\n").trim() || null : null),
       usage: { ...usage },
       usageReported,
       usageComplete: usageReported && !missingUsage,

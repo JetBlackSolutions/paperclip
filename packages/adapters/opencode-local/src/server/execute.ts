@@ -802,6 +802,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           adapterExecutionTimeout,
           stdout: attempt.proc.stdout,
           stderr: attempt.proc.stderr,
+          // Mark the closing reply so the server posts it. Without the mark the
+          // server sees `summary`, which also holds narration written before
+          // tool calls, and cannot tell whether it is an answer.
+          ...((synthesizedExitCode ?? 0) === 0 && !attempt.proc.signal && attempt.parsed.finalResponse
+            ? { finalResponseDisposition: "final", finalResponse: attempt.parsed.finalResponse }
+            : {}),
         },
         summary: attempt.parsed.summary,
         clearSession: Boolean(clearSessionOnMissingSession && !attempt.parsed.sessionId),
