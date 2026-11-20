@@ -95,3 +95,40 @@ describe("OpenCode reported usage completeness", () => {
     expect(parseOpenCodeJsonl(line + '\n' + JSON.stringify({ type: "step_finish" }))).toMatchObject({ usageReported: true, usageComplete: false });
   });
 });
+
+describe("OpenCode closing reply", () => {
+  const row = (type: string, part: Record<string, unknown> = {}) => JSON.stringify({ type, sessionID: "s1", part });
+  const tokens = { input: 1, output: 1, cache: { read: 0, write: 0 } };
+  const narration = "I'll check access directly now.";
+  const answer = "Yes, I can access the repository.";
+  // The shape of a real run: narration, two tool steps, then the answer.
+  const toolRun = [
+    row("step_start"), row("text", { text: narration }), row("tool_use", { tool: "bash", state: { status: "completed" } }),
+    row("step_finish", { reason: "tool-calls", tokens, cost: 0 }),
+    row("step_start"), row("tool_use", { tool: "bash", state: { status: "completed" } }),
+    row("step_finish", { reason: "tool-calls", tokens, cost: 0 }),
+    row("step_start"), row("text", { text: answer }), row("step_finish", { reason: "stop", tokens, cost: 0 }),
+  ];
+
+  it("separates the closing reply from narration written before tool calls", () => {
+    const parsed = parseOpenCodeJsonl(toolRun.join("\n"));
+    expect(parsed.finalResponse).toBe(answer);
+    // The summary keeps every message, as before.
+    expect(parsed.summary).toBe(`${narration}\n\n${answer}`);
+  });
+
+  it("joins the text parts of the closing step", () => {
+    const stdout = [row("step_start"), row("text", { text: "Part one." }), row("text", { text: "Part two." }), row("step_finish", { reason: "stop" })].join("\n");
+    expect(parseOpenCodeJsonl(stdout).finalResponse).toBe("Part one.\n\nPart two.");
+  });
+
+  it("reports no closing reply when the run did not end on one", () => {
+    // Stopped mid-work, cut off by the length limit, an empty closing step, and a stream with no step events.
+    expect(parseOpenCodeJsonl(toolRun.slice(0, 7).join("\n")).finalResponse).toBeNull();
+    expect(parseOpenCodeJsonl([row("step_start"), row("text", { text: "Cut o" }), row("step_finish", { reason: "length" })].join("\n")).finalResponse).toBeNull();
+    expect(parseOpenCodeJsonl([...toolRun.slice(0, 7), row("step_start"), row("step_finish", { reason: "stop" })].join("\n")).finalResponse).toBeNull();
+    expect(parseOpenCodeJsonl(row("text", { text: "done" })).finalResponse).toBeNull();
+    // Work that follows a "stop" step replaces it.
+    expect(parseOpenCodeJsonl([...toolRun, ...toolRun.slice(0, 4)].join("\n")).finalResponse).toBeNull();
+  });
+});

@@ -27,6 +27,10 @@ export function parseOpenCodeJsonl(stdout: string) {
 export function createOpenCodeJsonlParser() {
   let sessionId: string | null = null;
   const messages: string[] = [];
+  // Text of the step in progress. A step that finishes with reason "stop" is
+  // the model's closing reply; steps that end in tool calls are narration.
+  let stepMessages: string[] = [];
+  let finalResponse: string | null = null;
   const errors: string[] = [];
   const toolErrors: string[] = [];
   const usage = {
@@ -52,15 +56,26 @@ export function createOpenCodeJsonlParser() {
 
       const type = asString(event.type, "");
 
+      if (type === "step_start") {
+        stepMessages = [];
+        continue;
+      }
+
       if (type === "text") {
         const part = parseObject(event.part);
         const text = asString(part.text, "").trim();
-        if (text) messages.push(text);
+        if (text) {
+          messages.push(text);
+          stepMessages.push(text);
+        }
         continue;
       }
 
       if (type === "step_finish") {
         const part = parseObject(event.part);
+        // Only the latest step counts: work after a "stop" step replaces it.
+        finalResponse = asString(part.reason, "") === "stop" ? stepMessages.join("\n\n").trim() || null : null;
+        stepMessages = [];
         const tokens = parseObject(part.tokens);
         const cache = parseObject(tokens.cache);
         const counts = [tokens.input, tokens.output, cache.read === undefined ? 0 : cache.read, cache.write === undefined ? 0 : cache.write, tokens.reasoning === undefined ? 0 : tokens.reasoning];
@@ -96,6 +111,8 @@ export function createOpenCodeJsonlParser() {
     return {
       sessionId,
       summary: messages.join("\n\n").trim(),
+      /** The closing reply alone, when the run ended on a completed reply. Null otherwise. */
+      finalResponse,
       usage: { ...usage },
       usageReported,
       usageComplete: usageReported && !missingUsage,

@@ -1268,3 +1268,26 @@ describe("mergeHeartbeatRunResultJson", () => {
     });
   });
 });
+
+describe("adapter reply that follows tool calls", () => {
+  const narration = "I'll check access directly now.";
+  const answer = "Yes, I can access the repository.";
+  const summary = `${narration}\n\n${answer}`;
+
+  it("withholds a summary that opens with narration, because it may not be an answer", () => {
+    expect(resolveHeartbeatRunResponse({ resultJson: { summary } })).toMatchObject({
+      text: null,
+      decision: { chosenSource: "none", reasonCodes: ["legacy_adapter_summary_ambiguous"] },
+    });
+  });
+
+  it("posts the reply the adapter marked final, without the narration", () => {
+    expect(resolveHeartbeatRunResponse({
+      resultJson: { summary, finalResponseDisposition: "final", finalResponse: answer },
+    })).toMatchObject({
+      text: answer,
+      decision: { chosenSource: "adapter_final_response", commentAction: "create", reasonCodes: ["adapter_output_marked_final"] },
+    });
+  });
+});
+
