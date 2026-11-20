@@ -1,5 +1,5 @@
 import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
-import { environmentLeases, heartbeatRunEvents, heartbeatRuns, nativeRunFinalizations } from "@paperclipai/db";
+import { environmentLeases, heartbeatRunEvents, heartbeatRuns, nativeRunFinalizations, type Db } from "@paperclipai/db";
 import { PROCESS_IDENTITY_RECORDED, PROCESS_START_REQUESTED } from "./native-local-process-stop.js";
 import { LEGACY_WORKSPACE_RECOVERY_SCHEMA } from "./workspace-restore-recovery-state.js";
 
@@ -35,6 +35,26 @@ export function executionStartedEventPredicate() {
   return or(isNotNull(heartbeatRunEvents.sourceEventId), inArray(heartbeatRunEvents.eventType,
     ["adapter.invoke", PROCESS_START_REQUESTED, PROCESS_IDENTITY_RECORDED, "harness.ready", "session.started",
       "session.resumed", "session.updated", "turn.started", "provider.event", "provider.rpc_result", "tool.execution.started"]));
+}
+
+const LEGACY_SETTLED_RUN_STATUSES = ["failed", "cancelled", "timed_out", "interrupted"];
+
+/** A legacy run that settled before it invoked its adapter, for example a run
+ * that the dispatch gate cancelled. Legacy adapters write no stop receipt, so
+ * a missing stop record proves nothing by itself. This run had no process to
+ * stop: it has no process identity, no provider session, and no execution
+ * event. Adapters record adapter.invoke before they start a process. */
+export async function legacyRunNeverLaunched(db: Db, run: Pick<typeof heartbeatRuns.$inferSelect,
+  "id" | "companyId" | "runtimeMode" | "status" | "processPid" | "processGroupId" | "processStartedAt" |
+  "sessionIdAfter" | "nativeSessionId" | "runnerInstanceId" | "nativeIssueId">): Promise<boolean> {
+  if (run.runtimeMode !== "legacy" || !LEGACY_SETTLED_RUN_STATUSES.includes(run.status)) return false;
+  if (run.processPid || run.processGroupId || run.processStartedAt || run.sessionIdAfter ||
+      run.nativeSessionId || run.runnerInstanceId || run.nativeIssueId) return false;
+  const [started] = await db.select({ id: heartbeatRunEvents.id }).from(heartbeatRunEvents).where(and(
+    eq(heartbeatRunEvents.companyId, run.companyId), eq(heartbeatRunEvents.runId, run.id),
+    executionStartedEventPredicate(),
+  )).limit(1);
+  return !started;
 }
 
 /** Both dispatch cancellation policies require this same retained-evidence

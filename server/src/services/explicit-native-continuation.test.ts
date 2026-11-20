@@ -177,6 +177,37 @@ const support = externalUrl ? { supported: true } : await getEmbeddedPostgresTes
     expect(retryBlocked).toEqual(retry === null ? [] : [retry]);
   });
 
+  // The dispatch gate cancelled a legacy follow-up run (disposition repair)
+  // before it invoked its adapter. Legacy adapters write no stop receipt, so
+  // the user's next message waited for a stop record of a process that never
+  // existed ("process_identity_missing"), and Retry hit the same wall.
+  it.each([
+    { shape: "admits a user message after the dispatch gate cancelled a legacy run before launch", event: null, blocked: null },
+    { shape: "holds a user message when the cancelled legacy run invoked its adapter", event: "adapter.invoke", blocked: "process_identity_missing" },
+    { shape: "holds a user message when the cancelled legacy run reported provider work", event: "provider.event", blocked: "process_identity_missing" },
+  ] as Array<{ shape: string; event: string | null; blocked: string | null }>)("$shape", async ({ event, blocked: expected }) => {
+    const f = await seed();
+    await db.update(agents).set({ adapterType: "opencode_local" }).where(eq(agents.id, f.agentId));
+    await db.delete(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, f.sourceRunId));
+    await db.update(heartbeatRuns).set({ runtimeMode: "legacy", status: "cancelled", nativeIssueId: null,
+      processPid: null, processGroupId: null, executionStage: "settled",
+      startedAt: new Date("2026-09-11T08:00:00Z"), runtimeModeResolvedAt: new Date("2026-09-11T08:00:01Z"),
+      errorCode: "legacy_disposition_repair_suppressed", error: "Disposition repair suppressed: recorded_disposition",
+      resultJson: { cancellation: { reason: "Execution stopped without a recorded cancellation request: Disposition repair suppressed: recorded_disposition",
+        source: "unknown", expected: false, initiator: { type: "system" }, recordedAt: new Date("2026-09-11T08:00:02Z").toISOString() } },
+    }).where(eq(heartbeatRuns.id, f.sourceRunId));
+    await db.update(issueRecoveryActions).set({ cause: "legacy_execution_requires_reconciliation" })
+      .where(eq(issueRecoveryActions.sourceIssueId, f.issueId));
+    await db.insert(heartbeatRunEvents).values({ companyId: f.companyId, runId: f.sourceRunId, agentId: f.agentId,
+      seq: 1, eventType: "lifecycle", stream: "system", level: "info", message: "run cancelled before dispatch", payload: {} });
+    if (event) await db.insert(heartbeatRunEvents).values({ companyId: f.companyId, runId: f.sourceRunId, agentId: f.agentId,
+      seq: 2, eventType: event, stream: "system", level: "info", message: "execution evidence", payload: {} });
+    const { result, blocked } = await readAdmission(f, false);
+    if (expected === null) expect(result).not.toBeNull();
+    else expect(result).toBeNull();
+    expect(blocked).toEqual(expected === null ? [] : [expected]);
+  });
+
   it("keeps admission and the complete locked session profile while omitting prompt data", async () => {
     const f = await seed();
     const payload = randomBytes(128 * 1024).toString("base64");
