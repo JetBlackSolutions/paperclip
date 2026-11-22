@@ -26,6 +26,8 @@ const valueOf = (target: SuggestionTarget) => `${target.kind}:${target.id}`;
 interface Applied {
   suggestion: AssigneeSuggestion;
   source: "words" | "model";
+  /** For a model's choice: the request it was made for. The choice lapses when the request changes. */
+  text?: string;
 }
 
 export interface AssigneeSuggestionState {
@@ -113,8 +115,10 @@ export function useAssigneeSuggestion(input: {
 
   // Follow the words once typing has paused, until a model has been asked to choose.
   const settled = text === input.text && routines !== undefined;
+  // A model's choice stands only for the request it was asked about.
+  const modelChoiceStands = applied?.source === "model" && applied.text === input.text.trim();
   useEffect(() => {
-    if (!auto || !settled || appliedRef.current?.source === "model") return;
+    if (!auto || !settled || modelChoiceStands) return;
     if (fromWords) {
       setApplied({ suggestion: fromWords, source: "words" });
       if (valueOf(fromWords.target) !== currentValue) onApply(valueOf(fromWords.target));
@@ -154,6 +158,7 @@ export function useAssigneeSuggestion(input: {
       setModelNote(null);
       setApplied({
         source: "model",
+        text: liveRef.current.text.trim(),
         suggestion: {
           target,
           reason: "specialist",
@@ -178,8 +183,10 @@ export function useAssigneeSuggestion(input: {
     // Hidden at once when the person takes over, without waiting for the reset above.
     applied: auto ? applied : null,
     previousValue: defaultValue,
-    canAskModel: auto && availability?.available === true && agents.length - unavailableAgentIds.length >= 2
-      && input.text.trim().length >= MIN_TEXT_FOR_MODEL && applied?.source !== "model",
+    // Routines shape the shortlist the model chooses from, so the button waits for them.
+    canAskModel: auto && availability?.available === true && routines !== undefined
+      && agents.length - unavailableAgentIds.length >= 2
+      && input.text.trim().length >= MIN_TEXT_FOR_MODEL && !modelChoiceStands,
     askModel: () => ask.mutate(),
     askingModel: ask.isPending,
     modelNote: auto ? modelNote : null,
