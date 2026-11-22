@@ -31,6 +31,16 @@ describe("assignee suggestion decision", () => {
     expect(decisionRequestSchema.safeParse(request).success).toBe(true);
   });
 
+  it("keeps the largest valid request within the decision service's 32 KB limit", () => {
+    const many = Array.from({ length: 19 }, (_, index) => ({ id: `id-${index}`, name: `代理${index}`, capabilities: "能力".repeat(2000) }));
+    const { request } = buildAssigneeDecision("請".repeat(4000), many);
+    expect(decisionRequestSchema.safeParse(request).success).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(request))).toBeLessThanOrEqual(32_000);
+    const question = request.questions.assignee;
+    if (question?.type !== "choice") throw new Error("expected a choice question");
+    expect(question.criteria.agent1).toMatch(/^代理0\. 能力/);
+  });
+
   it("maps the model's choice back to the agent", () => {
     const { agentIdByKey } = buildAssigneeDecision("x", candidates);
     const result = (choice: string): DecisionResult =>

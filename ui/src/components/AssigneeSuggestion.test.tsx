@@ -100,6 +100,15 @@ describe("assignee suggestion in the new-task box", () => {
     expect(container.querySelector('[role="status"]')).toBeNull();
   });
 
+  it("drops a selected suggestion at once when the request is rewritten", async () => {
+    await render("Update the WordPress theme");
+    await settle();
+    expect(assignee()).toBe("agent:wp");
+    await render("Book a flight to Denver");
+    // No typing pause has passed.
+    expect(assignee()).toBe("agent:support");
+  });
+
   it("stops suggesting once the person picks a recipient", async () => {
     await render("Update the WordPress theme");
     await settle();
