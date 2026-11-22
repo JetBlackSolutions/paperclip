@@ -106,6 +106,9 @@ export function useAssigneeSuggestion(input: {
   const liveRef = useRef({ auto, text: input.text });
   liveRef.current = { auto, text: input.text };
 
+  // What the model said about one request says nothing about the next.
+  useEffect(() => { setModelNote(null); }, [input.text]);
+
   // The person took over, or the dialog closed: forget the suggestion.
   useEffect(() => {
     if (auto) return;
