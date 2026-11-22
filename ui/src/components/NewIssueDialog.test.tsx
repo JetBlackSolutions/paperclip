@@ -134,6 +134,12 @@ vi.mock("../api/agents", () => ({
   agentsApi: mockAgentsApi,
 }));
 
+// The assignee suggestion reads routines and checks the decision model.
+vi.mock("../api/routines", () => ({ routinesApi: { list: vi.fn(async () => []) } }));
+vi.mock("../api/decision-models", () => ({
+  decisionModelsApi: { availability: vi.fn(async () => ({ available: false, reason: "not_configured" })) },
+}));
+
 vi.mock("../api/auth", () => ({
   authApi: mockAuthApi,
 }));

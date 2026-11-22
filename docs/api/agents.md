@@ -15,6 +15,41 @@ Returns all agents in the company.
 
 This route does not accept query filters. Unsupported query parameters return `400`.
 
+## Suggest an Assignee
+
+```
+POST /api/companies/{companyId}/agents/assignee-suggestion
+{
+  "text": "Fix the plugin conflict on the client site",
+  "candidateAgentIds": ["{agentId}", "{agentId}"]
+}
+```
+
+Asks the company decision model which candidate agent should own a new task.
+Board users only. The request is billed through the decision model and appears
+in its history under the feature `issues.assignee_suggestion`.
+
+`text` is the request for the new task, at most 4000 characters.
+`candidateAgentIds` holds 2 to 19 agent ids. The server reads each candidate's
+name, title, capabilities, lead and routine titles. Candidates that the caller
+cannot read, or that are terminated or pending approval, are left out. The
+route returns `422` when fewer than two candidates remain.
+
+The response is one of:
+
+```json
+{ "status": "succeeded", "agentId": "{agentId}" }
+{ "status": "succeeded", "agentId": null }
+{ "status": "unavailable", "reason": "not_configured" }
+{ "status": "failed" }
+```
+
+A `null` `agentId` means that the model found no clear fit among the
+candidates. `unavailable` carries the decision model's reason, such as
+`not_configured`, `disabled` or `budget_blocked`. Check
+`GET /api/companies/{companyId}/decision-model/availability` before you offer
+this action.
+
 ## Get Agent
 
 ```
