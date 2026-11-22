@@ -1,3 +1,4 @@
+import type { AssigneeSuggestionRequest, AssigneeSuggestionResult } from "@paperclipai/shared";
 import type { AgentPublicIdentity } from "@paperclipai/shared";
 import type { AgentProjectAccess } from "@paperclipai/shared";
 import type {
@@ -128,6 +129,9 @@ export const agentsApi = {
     api.post<ConnectionIntentInteraction>(withCompanyScope(`/agents/${agentId}/connection-intents/${interactionId}/adopt`, companyId), { connectionId }),
 
   list: (companyId: string) => api.get<Agent[]>(`/companies/${companyId}/agents`),
+  /** Asks the company's decision model to choose between candidate agents. Billed per request. */
+  suggestAssignee: (companyId: string, body: AssigneeSuggestionRequest) =>
+    api.post<AssigneeSuggestionResult>(`/companies/${companyId}/agents/assignee-suggestion`, body),
   org: (companyId: string) => api.get<OrgNode[]>(`/companies/${companyId}/org`),
   listConfigurations: (companyId: string) =>
     api.get<Record<string, unknown>[]>(`/companies/${companyId}/agent-configurations`),
