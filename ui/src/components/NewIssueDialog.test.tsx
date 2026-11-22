@@ -631,6 +631,21 @@ describe("NewIssueDialog", () => {
     act(() => root.unmount());
   });
 
+  it("keeps a parked task in Backlog when a suggestion changes the assignee", async () => {
+    mockAgentsApi.list.mockResolvedValue(titledAgents);
+    dialogState.newIssueDefaults = { status: "backlog" };
+    const { root } = renderDialog(container);
+    await waitForAssertion(() => expect(assigneeLabel()).toBe("CEO"));
+    await describeTask("Update the WordPress theme on the client site");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
+    await waitForAssertion(() => expect(assigneeLabel()).toBe("Worker"));
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Create task"]')!.click());
+    await waitForAssertion(() => expect(mockIssuesApi.create).toHaveBeenCalled());
+    expect(mockIssuesApi.create.mock.calls[0][1]).toMatchObject({ status: "backlog", assigneeAgentId: "worker" });
+    act(() => root.unmount());
+    dialogState.newIssueDefaults = {};
+  });
+
   it("leaves an assignee the task was opened with alone, whatever the request says", async () => {
     mockAgentsApi.list.mockResolvedValue(titledAgents);
     dialogState.newIssueDefaults = { assigneeAgentId: "ceo" };

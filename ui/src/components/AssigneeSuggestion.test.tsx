@@ -133,6 +133,20 @@ describe("assignee suggestion in the new-task box", () => {
     expect(button(/Ask AI/)).toBeUndefined();
   });
 
+  it("ignores a model answer that arrives after the person picked a recipient", async () => {
+    mockDecisionModelsApi.availability.mockResolvedValue({ available: true });
+    let answer!: (result: unknown) => void;
+    mockAgentsApi.suggestAssignee.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    await render("Update the WordPress theme");
+    await settle();
+    await act(async () => { button(/Ask AI instead/)!.click(); });
+    await act(async () => { button(/Send to Atlas/)!.click(); });
+    await act(async () => { answer({ status: "succeeded", agentId: "support" }); });
+    await settle();
+    expect(assignee()).toBe("agent:lead");
+    expect(container.querySelector('[role="status"]')).toBeNull();
+  });
+
   it("keeps the assignee and says so when the model finds no fit", async () => {
     mockDecisionModelsApi.availability.mockResolvedValue({ available: true });
     mockAgentsApi.suggestAssignee.mockResolvedValue({ status: "succeeded", agentId: null });

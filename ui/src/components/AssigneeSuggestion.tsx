@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ASSIGNEE_SUGGESTION_MAX_CANDIDATES } from "@paperclipai/shared";
+import { ASSIGNEE_SUGGESTION_MAX_CANDIDATES, type AssigneeSuggestionResult } from "@paperclipai/shared";
 import { Sparkles } from "lucide-react";
 import { agentsApi } from "../api/agents";
 import { decisionModelsApi } from "../api/decision-models";
@@ -93,6 +93,9 @@ export function useAssigneeSuggestion(input: {
   const previousValueRef = useRef("");
   const appliedRef = useRef<Applied | null>(null);
   appliedRef.current = applied;
+  // What a pending model request must still find true before its answer may be used.
+  const liveRef = useRef({ auto, text: input.text });
+  liveRef.current = { auto, text: input.text };
 
   // The person took over, or the dialog closed: forget the suggestion.
   useEffect(() => {
@@ -119,41 +122,52 @@ export function useAssigneeSuggestion(input: {
   }, [auto, fromWords]);
 
   const ask = useMutation({
-    mutationFn: () => agentsApi.suggestAssignee(companyId!, {
-      text: input.text.trim().slice(0, 4000),
-      candidateAgentIds: shortlistAgents(
-        { text: input.text, agents: agents.filter((agent) => !unavailableAgentIds.includes(agent.id)), routines: routines ?? [], assignableUserIds },
-        ASSIGNEE_SUGGESTION_MAX_CANDIDATES,
-      ),
+    mutationFn: async () => ({
+      askedText: input.text,
+      result: await requestModelChoice(),
     }),
-    onSuccess: (result) => {
-      if (result.status === "succeeded" && result.agentId && agents.some((agent) => agent.id === result.agentId)) {
-        const target: SuggestionTarget = { kind: "agent", id: result.agentId };
-        if (!appliedRef.current) previousValueRef.current = currentValue;
-        setModelNote(null);
-        setApplied({
-          source: "model",
-          suggestion: {
-            target,
-            reason: "specialist",
-            matchedAgentIds: [result.agentId],
-            matchedWords: [],
-            lead: directLeadOf(result.agentId, agents, assignableUserIds),
-          },
-        });
-        if (valueOf(target) !== currentValue) onApply(valueOf(target));
-        return;
-      }
-      setModelNote(
-        result.status === "succeeded"
-          ? "AI found no clear fit, so the assignee is unchanged."
-          : result.status === "unavailable"
-            ? "AI suggestions aren't available right now. The assignee is unchanged."
-            : "AI couldn't choose this time. The assignee is unchanged.",
-      );
+    onSuccess: ({ askedText, result }) => {
+      // The person took over or changed the request while the model was choosing: the answer is stale.
+      if (!liveRef.current.auto || liveRef.current.text !== askedText) return;
+      applyModelChoice(result);
     },
-    onError: () => setModelNote("AI couldn't choose this time. The assignee is unchanged."),
+    onError: () => {
+      if (liveRef.current.auto) setModelNote("AI couldn't choose this time. The assignee is unchanged.");
+    },
   });
+  const requestModelChoice = () => agentsApi.suggestAssignee(companyId!, {
+    text: input.text.trim().slice(0, 4000),
+    candidateAgentIds: shortlistAgents(
+      { text: input.text, agents: agents.filter((agent) => !unavailableAgentIds.includes(agent.id)), routines: routines ?? [], assignableUserIds },
+      ASSIGNEE_SUGGESTION_MAX_CANDIDATES,
+    ),
+  });
+  const applyModelChoice = (result: AssigneeSuggestionResult) => {
+    if (result.status === "succeeded" && result.agentId && agents.some((agent) => agent.id === result.agentId)) {
+      const target: SuggestionTarget = { kind: "agent", id: result.agentId };
+      if (!appliedRef.current) previousValueRef.current = currentValue;
+      setModelNote(null);
+      setApplied({
+        source: "model",
+        suggestion: {
+          target,
+          reason: "specialist",
+          matchedAgentIds: [result.agentId],
+          matchedWords: [],
+          lead: directLeadOf(result.agentId, agents, assignableUserIds),
+        },
+      });
+      if (valueOf(target) !== currentValue) onApply(valueOf(target));
+      return;
+    }
+    setModelNote(
+      result.status === "succeeded"
+        ? "AI found no clear fit, so the assignee is unchanged."
+        : result.status === "unavailable"
+          ? "AI suggestions aren't available right now. The assignee is unchanged."
+          : "AI couldn't choose this time. The assignee is unchanged.",
+    );
+  };
 
   return {
     // Hidden at once when the person takes over, without waiting for the reset above.
