@@ -31,7 +31,7 @@ interface Applied {
 export interface AssigneeSuggestionState {
   /** The suggestion now selected as the assignee, or null. */
   applied: Applied | null;
-  /** The assignee selected before any suggestion replaced it. */
+  /** The assignee the dialog started from, before any suggestion replaced it. */
   previousValue: string;
   /** Whether the company's decision model can be asked to choose. */
   canAskModel: boolean;
@@ -55,10 +55,12 @@ export function useAssigneeSuggestion(input: {
   /** Agents that would not start work now. */
   unavailableAgentIds: readonly string[];
   currentValue: string;
+  /** The assignee the dialog started from. The assignee returns to it when no suggestion applies. */
+  defaultValue: string;
   /** Selects an assignee without recording it as the person's own choice. */
   onApply: (value: string) => void;
 }): AssigneeSuggestionState {
-  const { auto, companyId, agents, assignableUserIds, unavailableAgentIds, currentValue, onApply } = input;
+  const { auto, companyId, agents, assignableUserIds, unavailableAgentIds, currentValue, defaultValue, onApply } = input;
   const [text, setText] = useState("");
   useEffect(() => {
     if (!auto) { setText(""); return; }
@@ -90,7 +92,6 @@ export function useAssigneeSuggestion(input: {
 
   const [applied, setApplied] = useState<Applied | null>(null);
   const [modelNote, setModelNote] = useState<string | null>(null);
-  const previousValueRef = useRef("");
   const appliedRef = useRef<Applied | null>(null);
   appliedRef.current = applied;
   // What a pending model request must still find true before its answer may be used.
@@ -102,24 +103,23 @@ export function useAssigneeSuggestion(input: {
     if (auto) return;
     setApplied(null);
     setModelNote(null);
-    previousValueRef.current = "";
   }, [auto]);
 
-  // Follow the words as they change, until a model has been asked to choose.
+  // Follow the words once typing has paused, until a model has been asked to choose.
+  const settled = text === input.text;
   useEffect(() => {
-    if (!auto || appliedRef.current?.source === "model") return;
-    const current = appliedRef.current;
+    if (!auto || !settled || appliedRef.current?.source === "model") return;
     if (fromWords) {
-      if (!current) previousValueRef.current = currentValue;
       setApplied({ suggestion: fromWords, source: "words" });
       if (valueOf(fromWords.target) !== currentValue) onApply(valueOf(fromWords.target));
-    } else if (current) {
-      setApplied(null);
-      if (previousValueRef.current !== currentValue) onApply(previousValueRef.current);
+    } else {
+      // Nothing fits the request now: return to the default, also in a reopened draft that still holds an old suggestion.
+      if (appliedRef.current) setApplied(null);
+      if (defaultValue !== currentValue) onApply(defaultValue);
     }
     // Only a new suggestion should move the assignee; the other values are read as they are then.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auto, fromWords]);
+  }, [auto, fromWords, settled]);
 
   const ask = useMutation({
     mutationFn: async () => ({
@@ -145,7 +145,6 @@ export function useAssigneeSuggestion(input: {
   const applyModelChoice = (result: AssigneeSuggestionResult) => {
     if (result.status === "succeeded" && result.agentId && agents.some((agent) => agent.id === result.agentId)) {
       const target: SuggestionTarget = { kind: "agent", id: result.agentId };
-      if (!appliedRef.current) previousValueRef.current = currentValue;
       setModelNote(null);
       setApplied({
         source: "model",
@@ -154,7 +153,7 @@ export function useAssigneeSuggestion(input: {
           reason: "specialist",
           matchedAgentIds: [result.agentId],
           matchedWords: [],
-          lead: directLeadOf(result.agentId, agents, assignableUserIds),
+          lead: directLeadOf(result.agentId, agents, assignableUserIds, unavailableAgentIds),
         },
       });
       if (valueOf(target) !== currentValue) onApply(valueOf(target));
@@ -172,7 +171,7 @@ export function useAssigneeSuggestion(input: {
   return {
     // Hidden at once when the person takes over, without waiting for the reset above.
     applied: auto ? applied : null,
-    previousValue: previousValueRef.current,
+    previousValue: defaultValue,
     canAskModel: auto && availability?.available === true && agents.length - unavailableAgentIds.length >= 2
       && input.text.trim().length >= MIN_TEXT_FOR_MODEL && applied?.source !== "model",
     askModel: () => ask.mutate(),

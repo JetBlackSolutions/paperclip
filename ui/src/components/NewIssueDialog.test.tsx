@@ -646,6 +646,37 @@ describe("NewIssueDialog", () => {
     dialogState.newIssueDefaults = {};
   });
 
+  it("keeps following the request after an unfinished task is closed and reopened", async () => {
+    mockAgentsApi.list.mockResolvedValue(titledAgents);
+    // The draft an earlier session left: the suggestion replaced the CEO default and the person never chose.
+    localStorage.setItem("paperclip:issue-draft:user-1", JSON.stringify({
+      title: "", description: "Update the WordPress theme on the client site", status: "todo", priority: "", projectId: "",
+      assigneeValue: "agent:worker", assigneeDefaultValue: "agent:ceo", reviewerValue: "", approverValue: "",
+      assigneeModelOverride: "", assigneeThinkingEffort: "", assigneeChrome: false,
+    }));
+    const { root } = renderDialog(container);
+    await waitForAssertion(() => expect(assigneeLabel()).toBe("Worker"));
+    await describeTask("Book flights and a hotel for the conference");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
+    await waitForAssertion(() => expect(assigneeLabel()).toBe("CEO"));
+    act(() => root.unmount());
+  });
+
+  it("does not follow the request in a reopened task whose assignee the person chose", async () => {
+    mockAgentsApi.list.mockResolvedValue(titledAgents);
+    localStorage.setItem("paperclip:issue-draft:user-1", JSON.stringify({
+      title: "", description: "Something for the boss", status: "todo", priority: "", projectId: "",
+      assigneeValue: "agent:ceo", reviewerValue: "", approverValue: "",
+      assigneeModelOverride: "", assigneeThinkingEffort: "", assigneeChrome: false,
+    }));
+    const { root } = renderDialog(container);
+    await waitForAssertion(() => expect(assigneeLabel()).toBe("CEO"));
+    await describeTask("Update the WordPress theme on the client site");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
+    expect(assigneeLabel()).toBe("CEO");
+    act(() => root.unmount());
+  });
+
   it("leaves an assignee the task was opened with alone, whatever the request says", async () => {
     mockAgentsApi.list.mockResolvedValue(titledAgents);
     dialogState.newIssueDefaults = { assigneeAgentId: "ceo" };
