@@ -221,6 +221,19 @@ describe("assignee suggestion in the new-task box", () => {
     expect(notice()).not.toContain("AI couldn't choose");
   });
 
+  it("shows the model's outcome beside a word suggestion it did not replace, and does not offer to ask again", async () => {
+    mockDecisionModelsApi.availability.mockResolvedValue({ available: true });
+    mockAgentsApi.suggestAssignee.mockResolvedValue({ status: "succeeded", agentId: null });
+    await render("Update the WordPress theme");
+    await settle();
+    await act(async () => { button(/Ask AI instead/)!.click(); });
+    await settle();
+    expect(assignee()).toBe("agent:wp");
+    expect(notice()).toContain("Suggested: Quill");
+    expect(notice()).toContain("AI found no clear fit");
+    expect(button(/Ask AI/)).toBeUndefined();
+  });
+
   it("keeps the assignee and says so when the model finds no fit", async () => {
     mockDecisionModelsApi.availability.mockResolvedValue({ available: true });
     mockAgentsApi.suggestAssignee.mockResolvedValue({ status: "succeeded", agentId: null });

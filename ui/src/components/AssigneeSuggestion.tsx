@@ -109,8 +109,10 @@ export function useAssigneeSuggestion(input: {
   const liveRef = useRef({ auto, text: input.text });
   liveRef.current = { auto, text: input.text };
 
+  // The request the model last answered about. It is not asked twice about the same text.
+  const [answeredText, setAnsweredText] = useState<string | null>(null);
   // What the model said about one request says nothing about the next.
-  useEffect(() => { setModelNote(null); }, [input.text]);
+  useEffect(() => { setModelNote(null); setAnsweredText(null); }, [input.text]);
 
   // The person took over, or the dialog closed: forget the suggestion.
   useEffect(() => {
@@ -143,10 +145,12 @@ export function useAssigneeSuggestion(input: {
     onSuccess: ({ askedText, result }) => {
       // The person took over or changed the request while the model was choosing: the answer is stale.
       if (!liveRef.current.auto || liveRef.current.text !== askedText) return;
+      setAnsweredText(askedText);
       applyModelChoice(result);
     },
     onError: (_error, askedText) => {
       if (!liveRef.current.auto || liveRef.current.text !== askedText) return;
+      // A failed call may be tried again, so the request is not marked as answered.
       setModelNote("AI couldn't choose this time. The assignee is unchanged.");
     },
   });
@@ -191,7 +195,7 @@ export function useAssigneeSuggestion(input: {
     // Routines shape the shortlist the model chooses from, so the button waits for them.
     canAskModel: auto && availability?.available === true && routines !== undefined
       && agents.length - unavailableAgentIds.length >= 2
-      && input.text.trim().length >= MIN_TEXT_FOR_MODEL && !modelChoiceStands,
+      && input.text.trim().length >= MIN_TEXT_FOR_MODEL && !modelChoiceStands && answeredText !== input.text,
     askModel: () => ask.mutate(input.text),
     askingModel: ask.isPending,
     modelNote: auto ? modelNote : null,
@@ -267,9 +271,8 @@ export function AssigneeSuggestionNotice({ state, nameOf, onChoose, disabled }: 
           {targetIsPerson ? " (no AI usage)" : ""}
           {reason ? ` · ${reason}` : ""}
         </p>
-      ) : modelNote ? (
-        <p>{modelNote}</p>
       ) : null}
+      {modelNote ? <p>{modelNote}</p> : null}
       {loadFailed ? (
         <p role="alert" className="flex flex-wrap items-center gap-1.5">
           Couldn't load assignee suggestions.
