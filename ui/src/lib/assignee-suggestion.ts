@@ -59,8 +59,13 @@ const STOP_WORDS = new Set([
   "new", "no", "not", "now", "of", "on", "one", "or", "our", "out", "please", "so", "some", "that", "the", "their",
   "them", "then", "there", "these", "they", "this", "to", "up", "us", "want", "was", "we", "what", "when", "which",
   "who", "will", "with", "would", "you", "your",
-  "agent", "ai", "assistant", "bot", "coordinator", "lead", "manager", "specialist", "task", "team", "work",
+  "agent", "ai", "assistant", "bot", "coordinator", "lead", "manager", "senior", "specialist", "task", "team", "work",
+  // Verbs that open most requests, whatever the subject.
+  "add", "check", "create", "draft", "fix", "help", "plan", "prepare", "review", "run", "send", "update", "write",
 ]);
+
+/** Word forms the suffix rules below do not bring together. */
+const IRREGULAR_STEMS: Record<string, string> = { analysis: "analyz", analyses: "analyz", analytics: "analyz", analytic: "analyz" };
 
 const FIELD_WEIGHT = { identity: 4, capabilities: 3, routineTitle: 2, routineBody: 1 } as const;
 /**
@@ -77,6 +82,7 @@ const MIN_QUERY_TERMS = 2;
 
 /** Reduces a word to a rough stem so "invoices", "invoicing" and "invoice" match. */
 function stem(word: string): string {
+  if (IRREGULAR_STEMS[word]) return IRREGULAR_STEMS[word];
   if (word.length > 5 && word.endsWith("ing")) return word.slice(0, -3);
   if (word.length > 4 && word.endsWith("ies")) return `${word.slice(0, -3)}y`;
   if (word.length > 4 && word.endsWith("ed")) return word.slice(0, -2);
@@ -149,12 +155,12 @@ export function suggestAssignee(input: SuggestAssigneeInput): AssigneeSuggestion
   // Unavailable agents are still scored: a request that fits one of them and a
   // colleague spans both, and belongs with their lead.
   const profiles = buildProfiles(input.agents, input.routines ?? []);
-  // A word only one agent has counts in full; a word every agent shares counts for little.
+  // A word only one agent has counts in full; a word many agents share counts for little.
   const agentsWithTerm = new Map<string, number>();
   for (const term of queryTerms) {
     agentsWithTerm.set(term, profiles.filter((profile) => profile.weights.has(term)).length);
   }
-  const rarity = (term: string) => 1 - ((agentsWithTerm.get(term) ?? 1) - 1) / profiles.length;
+  const rarity = (term: string) => 1 / Math.sqrt(Math.max(1, agentsWithTerm.get(term) ?? 1));
 
   const scored = profiles
     .map((profile) => {
@@ -167,6 +173,8 @@ export function suggestAssignee(input: SuggestAssigneeInput): AssigneeSuggestion
 
   const best = scored[0];
   if (!best || best.score < MIN_SCORE) return null;
+  // A single matching word decides only when the agent is named or described by it, not when a routine mentions it.
+  if (best.matched.length < 2 && (best.profile.weights.get(best.matched[0]!) ?? 0) < FIELD_WEIGHT.capabilities) return null;
 
   const byId = new Map(input.agents.map((agent) => [agent.id, agent]));
   const assignableUsers = new Set(input.assignableUserIds ?? []);
