@@ -198,6 +198,20 @@ describe("assignee suggestion in the new-task box", () => {
     expect(container.querySelector('[role="status"]')).toBeNull();
   });
 
+  it("ignores a model failure for a request that has since been rewritten", async () => {
+    mockDecisionModelsApi.availability.mockResolvedValue({ available: true });
+    let fail!: (error: Error) => void;
+    mockAgentsApi.suggestAssignee.mockReturnValue(new Promise((_resolve, reject) => { fail = reject; }));
+    await render("Something vague that matches nobody at all");
+    await settle();
+    await act(async () => { button(/Ask AI to pick/)!.click(); });
+    await render("A different request that matches nobody either");
+    await settle();
+    await act(async () => { fail(new Error("offline")); });
+    await settle();
+    expect(notice()).not.toContain("AI couldn't choose");
+  });
+
   it("keeps the assignee and says so when the model finds no fit", async () => {
     mockDecisionModelsApi.availability.mockResolvedValue({ available: true });
     mockAgentsApi.suggestAssignee.mockResolvedValue({ status: "succeeded", agentId: null });

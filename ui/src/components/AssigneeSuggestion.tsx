@@ -132,20 +132,19 @@ export function useAssigneeSuggestion(input: {
     }
     // Only a new suggestion should move the assignee; the other values are read as they are then.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auto, fromWords, settled]);
+  }, [auto, fromWords, settled, defaultValue]);
 
   const ask = useMutation({
-    mutationFn: async () => ({
-      askedText: input.text,
-      result: await requestModelChoice(),
-    }),
+    // The request text travels with the call, so a late answer or failure can be matched to it.
+    mutationFn: async (askedText: string) => ({ askedText, result: await requestModelChoice() }),
     onSuccess: ({ askedText, result }) => {
       // The person took over or changed the request while the model was choosing: the answer is stale.
       if (!liveRef.current.auto || liveRef.current.text !== askedText) return;
       applyModelChoice(result);
     },
-    onError: () => {
-      if (liveRef.current.auto) setModelNote("AI couldn't choose this time. The assignee is unchanged.");
+    onError: (_error, askedText) => {
+      if (!liveRef.current.auto || liveRef.current.text !== askedText) return;
+      setModelNote("AI couldn't choose this time. The assignee is unchanged.");
     },
   });
   const requestModelChoice = () => agentsApi.suggestAssignee(companyId!, {
@@ -190,7 +189,7 @@ export function useAssigneeSuggestion(input: {
     canAskModel: auto && availability?.available === true && routines !== undefined
       && agents.length - unavailableAgentIds.length >= 2
       && input.text.trim().length >= MIN_TEXT_FOR_MODEL && !modelChoiceStands,
-    askModel: () => ask.mutate(),
+    askModel: () => ask.mutate(input.text),
     askingModel: ask.isPending,
     modelNote: auto ? modelNote : null,
     unavailableAgentIds,
