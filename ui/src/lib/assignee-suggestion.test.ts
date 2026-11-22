@@ -90,7 +90,16 @@ describe("suggestAssignee", () => {
   });
 
   it("names only the words that carried the match", () => {
-    expect(suggest("Update the WordPress theme on the client site")?.matchedWords).toEqual(["WordPress", "Update"]);
+    expect(suggest("Update the WordPress theme on the client site")?.matchedWords).toEqual(["WordPress"]);
+  });
+
+  it("brings 'analyze' and 'analysis' together", () => {
+    const analysts: SuggestionAgent[] = [{ id: "a", name: "Cam", title: "Campaign analysis" }, { id: "b", name: "Bo", title: "Bookkeeper" }];
+    expect(suggestAssignee({ text: "Analyze the spring results", agents: analysts })?.target).toEqual({ kind: "agent", id: "a" });
+  });
+
+  it("does not decide on one word that only a routine mentions", () => {
+    expect(suggest("Rebuild the staging environment tonight")).toBeNull();
   });
 
   it("never suggests an agent that would not start work", () => {
