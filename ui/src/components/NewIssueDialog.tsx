@@ -188,6 +188,11 @@ interface IssueDraft {
   status: string;
   priority: string;
   assigneeValue: string;
+  /**
+   * Set while the dialog chooses the assignee and the person has not: the default
+   * the dialog started from, which a suggestion may have replaced since.
+   */
+  assigneeDefaultValue?: string;
   reviewerValue: string;
   approverValue: string;
   watchdogAgentId?: string;
@@ -492,6 +497,8 @@ function AccountNewIssueDialog({ ignoreDefaults }: { ignoreDefaults: boolean }) 
   const defaultAssigneePendingRef = useRef(false);
   // True while the assignee is still the default this dialog chose, so a suggestion may replace it.
   const [assigneeIsDefault, setAssigneeIsDefault] = useState(false);
+  // The default the dialog started from; the assignee returns to it when a suggestion no longer applies.
+  const [defaultAssigneeValue, setDefaultAssigneeValue] = useState("");
   const defaultProjectPendingRef = useRef(false);
   // `recovering`: a create restored without its files keeps its key until it is
   // sent or cancelled, whatever the files and fields look like when resubmitted.
@@ -773,6 +780,7 @@ function AccountNewIssueDialog({ ignoreDefaults }: { ignoreDefaults: boolean }) 
         status,
         priority,
         assigneeValue,
+        assigneeDefaultValue: assigneeIsDefault ? defaultAssigneeValue : undefined,
         reviewerValue,
         approverValue,
         watchdogAgentId,
@@ -796,6 +804,8 @@ function AccountNewIssueDialog({ ignoreDefaults }: { ignoreDefaults: boolean }) 
       status,
       priority,
       assigneeValue,
+      assigneeIsDefault,
+      defaultAssigneeValue,
       reviewerValue,
       approverValue,
       watchdogAgentId,
@@ -831,6 +841,7 @@ function AccountNewIssueDialog({ ignoreDefaults }: { ignoreDefaults: boolean }) 
     status,
     priority,
     assigneeValue,
+    assigneeIsDefault,
     reviewerValue,
     approverValue,
     watchdogAgentId,
@@ -951,6 +962,11 @@ function AccountNewIssueDialog({ ignoreDefaults }: { ignoreDefaults: boolean }) 
           ? assigneeValueFromSelection(newIssueDefaults)
           : (draft.assigneeValue ?? draft.assigneeId ?? ""),
       );
+      // A draft whose assignee the person never chose keeps following the request.
+      const draftFollowsRequest = draft.assigneeDefaultValue !== undefined
+        && !newIssueDefaults.assigneeAgentId && !newIssueDefaults.assigneeUserId;
+      setAssigneeIsDefault(draftFollowsRequest);
+      setDefaultAssigneeValue(draftFollowsRequest ? draft.assigneeDefaultValue ?? "" : "");
       setReviewerValue(draft.reviewerValue ?? "");
       setApproverValue(draft.approverValue ?? "");
 
@@ -1289,6 +1305,7 @@ function AccountNewIssueDialog({ ignoreDefaults }: { ignoreDefaults: boolean }) 
     assignableUserIds,
     unavailableAgentIds,
     currentValue: assigneeValue,
+    defaultValue: defaultAssigneeValue,
     onApply: applyAssignee,
   });
   // Resolve once after the directory loads, without resetting text typed while
@@ -1307,7 +1324,9 @@ function AccountNewIssueDialog({ ignoreDefaults }: { ignoreDefaults: boolean }) 
     const targets = agents.filter(isAgentTaskTarget);
     const fallback = targets.find((agent) => agent.id === primaryAgent?.primaryAgentId)
       ?? targets.find((agent) => agent.role === "ceo") ?? targets[0];
-    setAssigneeValue(recent ?? (fallback ? assigneeValueFromSelection({ assigneeAgentId: fallback.id }) : ""));
+    const defaultValue = recent ?? (fallback ? assigneeValueFromSelection({ assigneeAgentId: fallback.id }) : "");
+    setAssigneeValue(defaultValue);
+    setDefaultAssigneeValue(defaultValue);
     setAssigneeIsDefault(true);
   }, [newIssueOpen, effectiveCompanyId, agents, assigneeOptions, sessionFetched, membersFetched, primaryAgent?.loading, primaryAgent?.primaryAgentId]);
   useEffect(() => {

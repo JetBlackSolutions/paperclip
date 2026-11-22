@@ -34,6 +34,7 @@ function Harness({ text, initialAuto = true }: { text: string; initialAuto?: boo
     assignableUserIds: [],
     unavailableAgentIds: [],
     currentValue: value,
+    defaultValue: "agent:support",
     onApply: setValue,
   });
   return (

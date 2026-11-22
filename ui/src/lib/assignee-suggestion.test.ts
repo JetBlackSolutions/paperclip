@@ -164,5 +164,6 @@ describe("directLeadOf", () => {
     expect(directLeadOf("seo", agents, ["user-erin"])).toEqual({ kind: "user", id: "user-erin" });
     expect(directLeadOf("seo", agents)).toBeNull();
     expect(directLeadOf("ceo", agents)).toBeNull();
+    expect(directLeadOf("wp", agents, [], ["web-lead"])).toBeNull();
   });
 });

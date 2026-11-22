@@ -230,15 +230,18 @@ export function suggestAssignee(input: SuggestAssigneeInput): AssigneeSuggestion
   };
 }
 
-/** The agent or person an agent reports to directly, when that lead may receive tasks. */
+/** The agent or person an agent reports to directly, when that lead may receive tasks and would start work. */
 export function directLeadOf(
   agentId: string,
   agents: readonly SuggestionAgent[],
   assignableUserIds: readonly string[] = [],
+  unavailableAgentIds: readonly string[] = [],
 ): SuggestionTarget | null {
   const agent = agents.find((candidate) => candidate.id === agentId);
   if (!agent) return null;
-  if (agent.reportsTo && agents.some((candidate) => candidate.id === agent.reportsTo)) return { kind: "agent", id: agent.reportsTo };
+  if (agent.reportsTo && agents.some((candidate) => candidate.id === agent.reportsTo)) {
+    return unavailableAgentIds.includes(agent.reportsTo) ? null : { kind: "agent", id: agent.reportsTo };
+  }
   if (agent.reportsToUserId && assignableUserIds.includes(agent.reportsToUserId)) return { kind: "user", id: agent.reportsToUserId };
   return null;
 }
