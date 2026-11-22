@@ -4062,7 +4062,9 @@ export function agentRoutes(
       const requested = [...new Set(req.body.candidateAgentIds as string[])];
       const chosen = requested.flatMap((id) => {
         const agent = byId.get(id);
-        return agent && agent.status !== "terminated" && agent.status !== "pending_approval" ? [agent] : [];
+        // The same agents a task may be assigned to: creation rejects the others.
+        return agent && agent.status !== "terminated" && agent.status !== "pending_approval"
+          && agent.orgChainHealth?.status !== "invalid_org_chain" ? [agent] : [];
       });
       if (chosen.length < 2) {
         res.status(422).json({ error: "At least two candidate agents must be assignable in this company" });

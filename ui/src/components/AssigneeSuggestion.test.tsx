@@ -157,6 +157,33 @@ describe("assignee suggestion in the new-task box", () => {
     expect(button(/Ask AI/)).toBeUndefined();
   });
 
+  it("drops a model's choice when the request is rewritten", async () => {
+    mockDecisionModelsApi.availability.mockResolvedValue({ available: true });
+    mockAgentsApi.suggestAssignee.mockResolvedValue({ status: "succeeded", agentId: "wp" });
+    await render("Something vague that matches nobody at all");
+    await settle();
+    await act(async () => { button(/Ask AI to pick/)!.click(); });
+    await settle();
+    expect(assignee()).toBe("agent:wp");
+    await render("A different request that matches nobody either");
+    await settle();
+    expect(assignee()).toBe("agent:support");
+    expect(notice()).not.toContain("chosen by AI");
+    expect(button(/Ask AI to pick/)).toBeTruthy();
+  });
+
+  it("offers the AI button only once routines have loaded", async () => {
+    mockDecisionModelsApi.availability.mockResolvedValue({ available: true });
+    let loaded!: (routines: unknown[]) => void;
+    mockRoutinesApi.list.mockReturnValue(new Promise((resolve) => { loaded = resolve; }));
+    await render("Something vague that matches nobody at all");
+    await settle();
+    expect(button(/Ask AI/)).toBeUndefined();
+    await act(async () => { loaded([]); });
+    await settle();
+    expect(button(/Ask AI to pick/)).toBeTruthy();
+  });
+
   it("ignores a model answer that arrives after the person picked a recipient", async () => {
     mockDecisionModelsApi.availability.mockResolvedValue({ available: true });
     let answer!: (result: unknown) => void;
