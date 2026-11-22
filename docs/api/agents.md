@@ -32,7 +32,8 @@ in its history under the feature `issues.assignee_suggestion`.
 `text` is the request for the new task, at most 4000 characters.
 `candidateAgentIds` holds 2 to 19 agent ids. The server reads each candidate's
 name, title, capabilities, lead and routine titles. Candidates that the caller
-cannot read, or that are terminated or pending approval, are left out. The
+cannot read, that are terminated or pending approval, or that have an invalid
+reporting chain are left out. The
 route returns `422` when fewer than two candidates remain.
 
 The response is one of:
