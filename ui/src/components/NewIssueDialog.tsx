@@ -1259,7 +1259,6 @@ function AccountNewIssueDialog({ ignoreDefaults }: { ignoreDefaults: boolean }) 
     setAssigneeModelOverride("");
     setAssigneeThinkingEffort("");
     setAssigneeChrome(false);
-    if (value && status === "backlog") setStatus("todo");
   };
   // The person picked the assignee themselves: remember it and stop suggesting.
   const chooseAssignee = (value: string | null) => {
@@ -1270,6 +1269,8 @@ function AccountNewIssueDialog({ ignoreDefaults }: { ignoreDefaults: boolean }) 
     if (next.assigneeAgentId) trackRecentAssignee(next.assigneeAgentId, effectiveCompanyId ?? undefined);
     if (next.assigneeUserId) trackRecentAssigneeUser(next.assigneeUserId, effectiveCompanyId ?? undefined);
     applyAssignee(value);
+    // Only the person's own choice moves a parked task to Todo; a suggestion leaves the status alone.
+    if (value && status === "backlog") setStatus("todo");
   };
   const suggestionAgents = useMemo(() => (agents ?? []).filter(isAgentTaskTarget), [agents]);
   const unavailableAgentIds = useMemo(
