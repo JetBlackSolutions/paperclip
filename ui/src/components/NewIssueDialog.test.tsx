@@ -666,6 +666,24 @@ describe("NewIssueDialog", () => {
     act(() => root.unmount());
   });
 
+  it("does not return a reopened task to a default that can no longer be assigned", async () => {
+    mockAgentsApi.list.mockResolvedValue(titledAgents);
+    localStorage.setItem("paperclip:issue-draft:user-1", JSON.stringify({
+      title: "", description: "Update the WordPress theme on the client site", status: "todo", priority: "", projectId: "",
+      assigneeValue: "agent:worker", assigneeDefaultValue: "agent:deleted", reviewerValue: "", approverValue: "",
+      assigneeModelOverride: "", assigneeThinkingEffort: "", assigneeChrome: false,
+    }));
+    const { root } = renderDialog(container);
+    await waitForAssertion(() => expect(assigneeLabel()).toBe("Worker"));
+    await describeTask("Book flights and a hotel for the conference");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
+    await waitForAssertion(() => expect(assigneeLabel()).not.toBe("Worker"));
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Create task"]')!.click());
+    await waitForAssertion(() => expect(mockIssuesApi.create).toHaveBeenCalled());
+    expect(mockIssuesApi.create.mock.calls[0][1].assigneeAgentId).not.toBe("deleted");
+    act(() => root.unmount());
+  });
+
   it("does not follow the request in a reopened task whose assignee the person chose", async () => {
     mockAgentsApi.list.mockResolvedValue(titledAgents);
     localStorage.setItem("paperclip:issue-draft:user-1", JSON.stringify({

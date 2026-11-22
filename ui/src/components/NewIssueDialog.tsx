@@ -1305,7 +1305,8 @@ function AccountNewIssueDialog({ ignoreDefaults }: { ignoreDefaults: boolean }) 
     assignableUserIds,
     unavailableAgentIds,
     currentValue: assigneeValue,
-    defaultValue: defaultAssigneeValue,
+    // A default saved with an old draft may no longer be assignable; then the task returns to unassigned.
+    defaultValue: !agents || assigneeOptions.some((option) => option.id === defaultAssigneeValue) ? defaultAssigneeValue : "",
     onApply: applyAssignee,
   });
   // Resolve once after the directory loads, without resetting text typed while
