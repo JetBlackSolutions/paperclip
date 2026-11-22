@@ -155,20 +155,30 @@ export function suggestAssignee(input: SuggestAssigneeInput): AssigneeSuggestion
   // Unavailable agents are still scored: a request that fits one of them and a
   // colleague spans both, and belongs with their lead.
   const profiles = buildProfiles(input.agents, input.routines ?? []);
-  // A word only one agent has counts in full; a word many agents share counts for little.
-  const agentsWithTerm = new Map<string, number>();
-  for (const term of queryTerms) {
-    agentsWithTerm.set(term, profiles.filter((profile) => profile.weights.has(term)).length);
+  // Index the request's words once, so scoring touches only the agents that have each word.
+  const wanted = new Set(queryTerms);
+  const agentsByTerm = new Map<string, AgentProfile[]>();
+  for (const profile of profiles) {
+    for (const term of profile.weights.keys()) {
+      if (!wanted.has(term)) continue;
+      const holders = agentsByTerm.get(term);
+      if (holders) holders.push(profile);
+      else agentsByTerm.set(term, [profile]);
+    }
   }
-  const rarity = (term: string) => 1 / Math.sqrt(Math.max(1, agentsWithTerm.get(term) ?? 1));
+  // A word only one agent has counts in full; a word many agents share counts for little.
+  const rarity = (term: string) => 1 / Math.sqrt(Math.max(1, agentsByTerm.get(term)?.length ?? 1));
 
-  const scored = profiles
-    .map((profile) => {
-      const matched = queryTerms.filter((term) => profile.weights.has(term));
-      const score = matched.reduce((sum, term) => sum + rarity(term) * (profile.weights.get(term) ?? 0), 0);
-      return { profile, matched, score };
-    })
-    .filter((entry) => entry.score > 0)
+  const byProfile = new Map<AgentProfile, { profile: AgentProfile; matched: string[]; score: number }>();
+  for (const term of queryTerms) {
+    for (const profile of agentsByTerm.get(term) ?? []) {
+      const entry = byProfile.get(profile) ?? { profile, matched: [], score: 0 };
+      entry.matched.push(term);
+      entry.score += rarity(term) * (profile.weights.get(term) ?? 0);
+      byProfile.set(profile, entry);
+    }
+  }
+  const scored = [...byProfile.values()]
     .sort((a, b) => b.score - a.score || a.profile.agent.name.localeCompare(b.profile.agent.name));
 
   const best = scored[0];

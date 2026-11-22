@@ -207,5 +207,9 @@ describe("assignee suggestion in the new-task box", () => {
     await settle();
     expect(assignee()).toBe("agent:support");
     expect(notice()).toContain("AI found no clear fit");
+    // The note belongs to that request only.
+    await render("Another request that matches nobody at all");
+    await settle();
+    expect(notice()).not.toContain("AI found no clear fit");
   });
 });
