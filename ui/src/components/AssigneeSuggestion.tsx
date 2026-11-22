@@ -69,6 +69,9 @@ export function useAssigneeSuggestion(input: {
   const [text, setText] = useState("");
   useEffect(() => {
     if (!auto) { setText(""); return; }
+    // Once a suggestion from the words is selected, follow every edit at once: a task
+    // sent straight after a rewrite must not keep the assignee chosen for the old text.
+    if (appliedRef.current?.source === "words") { setText(input.text); return; }
     const timer = setTimeout(() => setText(input.text), TYPING_PAUSE_MS);
     return () => clearTimeout(timer);
   }, [auto, input.text]);
