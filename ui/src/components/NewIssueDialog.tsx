@@ -38,6 +38,7 @@ import { Button } from "@/components/ui/button";
 import { Paperclip, FileText, Flag, PauseCircle, ListTree, X, ShieldAlert, Folder, ChevronDown, Lock } from "lucide-react";
 import type { MentionOption } from "./MarkdownEditor";
 import { TaskChatComposer } from "./task-chat/TaskChatComposer";
+import { AssigneeSuggestionNotice, useAssigneeSuggestion } from "./AssigneeSuggestion";
 import { ComposerWorktreePicker } from "./task-chat/ComposerWorktreePicker";
 import { TaskChatPresentationProvider } from "./task-chat/presentation-mode";
 import { mergeComposerRunSettings, type ComposerRunSettings } from "./task-chat/composer-run-settings";
@@ -492,6 +493,8 @@ function AccountNewIssueDialog({ ignoreDefaults }: { ignoreDefaults: boolean }) 
   const executionWorkspaceDefaultProjectId = useRef<string | null>(null);
   const initializationKeyRef = useRef<string | null>(null);
   const defaultAssigneePendingRef = useRef(false);
+  // True while the assignee is still the default this dialog chose, so a suggestion may replace it.
+  const [assigneeIsDefault, setAssigneeIsDefault] = useState(false);
   const defaultProjectPendingRef = useRef(false);
   // `recovering`: a create restored without its files keeps its key until it is
   // sent or cancelled, whatever the files and fields look like when resubmitted.
@@ -995,6 +998,7 @@ function AccountNewIssueDialog({ ignoreDefaults }: { ignoreDefaults: boolean }) 
     if (!newIssueOpen) {
       initializationKeyRef.current = null;
       defaultAssigneePendingRef.current = false;
+      setAssigneeIsDefault(false);
       defaultProjectPendingRef.current = false;
       return;
     }
@@ -1358,6 +1362,45 @@ function AccountNewIssueDialog({ ignoreDefaults }: { ignoreDefaults: boolean }) 
     ],
     [agents, companyMembers?.users, currentUserId, recentAssigneeIds],
   );
+  // Agent settings belong to the assignee they were chosen for.
+  const applyAssignee = (value: string) => {
+    setAssigneeValue(value);
+    setComposerSettings(null);
+    setAssigneeModelLane("primary");
+    setAssigneeModelOverride("");
+    setAssigneeThinkingEffort("");
+    setAssigneeChrome(false);
+    if (value && status === "backlog") setStatus("todo");
+  };
+  // The person picked the assignee themselves: remember it and stop suggesting.
+  const chooseAssignee = (value: string | null) => {
+    if (value === null) return;
+    defaultAssigneePendingRef.current = false;
+    setAssigneeIsDefault(false);
+    const next = parseAssigneeValue(value);
+    if (next.assigneeAgentId) trackRecentAssignee(next.assigneeAgentId, effectiveCompanyId ?? undefined);
+    if (next.assigneeUserId) trackRecentAssigneeUser(next.assigneeUserId, effectiveCompanyId ?? undefined);
+    applyAssignee(value);
+  };
+  const suggestionAgents = useMemo(() => (agents ?? []).filter(isAgentTaskTarget), [agents]);
+  const unavailableAgentIds = useMemo(
+    () => suggestionAgents.flatMap((agent) => (agent.status === "paused" ? [agent.id] : [])),
+    [suggestionAgents],
+  );
+  const assignableUserIds = useMemo(
+    () => assigneeOptions.flatMap((option) => (option.id.startsWith("user:") ? [option.id.slice("user:".length)] : [])),
+    [assigneeOptions],
+  );
+  const assigneeSuggestion = useAssigneeSuggestion({
+    auto: newIssueOpen && assigneeIsDefault && !createIssue.isPending && !durableCreate.pending,
+    companyId: effectiveCompanyId,
+    text: `${title}\n${description}`,
+    agents: suggestionAgents,
+    assignableUserIds,
+    unavailableAgentIds,
+    currentValue: assigneeValue,
+    onApply: applyAssignee,
+  });
   // Resolve once after the directory loads, without resetting text typed while
   // the queries were in flight or replacing an explicit/restored assignee.
   useEffect(() => {
@@ -1375,6 +1418,7 @@ function AccountNewIssueDialog({ ignoreDefaults }: { ignoreDefaults: boolean }) 
     const fallback = targets.find((agent) => agent.id === primaryAgent?.primaryAgentId)
       ?? targets.find((agent) => agent.role === "ceo") ?? targets[0];
     setAssigneeValue(recent ?? (fallback ? assigneeValueFromSelection({ assigneeAgentId: fallback.id }) : ""));
+    setAssigneeIsDefault(true);
   }, [newIssueOpen, effectiveCompanyId, agents, assigneeOptions, sessionFetched, membersFetched, primaryAgent?.loading, primaryAgent?.primaryAgentId]);
   useEffect(() => {
     if (!newIssueOpen || !effectiveCompanyId || !defaultProjectPendingRef.current || !projects) return;
@@ -1545,20 +1589,7 @@ function AccountNewIssueDialog({ ignoreDefaults }: { ignoreDefaults: boolean }) 
               agentMap={modelAgents}
               currentAssigneeValue={assigneeValue}
               assigneeAdapterOverrides={inheritedOverrides}
-              onPendingAssigneeChange={(value) => {
-                if (value === null) return;
-                defaultAssigneePendingRef.current = false;
-                const next = parseAssigneeValue(value);
-                if (next.assigneeAgentId) trackRecentAssignee(next.assigneeAgentId, effectiveCompanyId ?? undefined);
-                if (next.assigneeUserId) trackRecentAssigneeUser(next.assigneeUserId, effectiveCompanyId ?? undefined);
-                setAssigneeValue(value);
-                setComposerSettings(null);
-                setAssigneeModelLane("primary");
-                setAssigneeModelOverride("");
-                setAssigneeThinkingEffort("");
-                setAssigneeChrome(false);
-                if (value && status === "backlog") setStatus("todo");
-              }}
+              onPendingAssigneeChange={chooseAssignee}
               creation={{
                 value: description,
                 onChange: handleDescriptionChange,
@@ -1658,6 +1689,12 @@ function AccountNewIssueDialog({ ignoreDefaults }: { ignoreDefaults: boolean }) 
                   ) : undefined,
                 details: (
                   <>
+                    <AssigneeSuggestionNotice
+                      state={assigneeSuggestion}
+                      nameOf={(value) => assigneeOptions.find((option) => option.id === value)?.label ?? null}
+                      onChoose={chooseAssignee}
+                      disabled={createIssue.isPending || Boolean(durableCreate.pending)}
+                    />
                     {parentPrivacyUnresolved ? (
                       <div role={parentPrivacyError ? "alert" : "status"} className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
                         <span>{parentPrivacyError ? "Couldn't check parent access." : "Checking parent access…"}</span>
