@@ -111,6 +111,29 @@ describe("assignee suggestion in the new-task box", () => {
     expect(container.querySelector('[role="status"]')).toBeNull();
   });
 
+  it("waits for routines before it changes the assignee", async () => {
+    let loaded!: (routines: unknown[]) => void;
+    mockRoutinesApi.list.mockReturnValue(new Promise((resolve) => { loaded = resolve; }));
+    await render("Update the WordPress theme");
+    await settle();
+    expect(assignee()).toBe("agent:support");
+    await act(async () => { loaded([]); });
+    await settle();
+    expect(assignee()).toBe("agent:wp");
+  });
+
+  it("says so and offers a retry when suggestions cannot be loaded", async () => {
+    mockRoutinesApi.list.mockRejectedValueOnce(new Error("offline")).mockResolvedValue([]);
+    await render("Update the WordPress theme");
+    await settle();
+    expect(assignee()).toBe("agent:support");
+    expect(notice()).toContain("Couldn't load assignee suggestions.");
+    await act(async () => { button(/Retry/)!.click(); });
+    await settle();
+    expect(assignee()).toBe("agent:wp");
+    expect(notice()).not.toContain("Couldn't load");
+  });
+
   it("offers no AI button when the company has no decision model", async () => {
     await render("Something vague that matches nobody at all");
     await settle();

@@ -41,6 +41,9 @@ export interface AssigneeSuggestionState {
   modelNote: string | null;
   /** Agents that would not start work now; they are not offered as alternatives. */
   unavailableAgentIds: readonly string[];
+  /** True when the data behind suggestions could not be loaded. */
+  loadFailed: boolean;
+  retryLoad: () => void;
 }
 
 export function useAssigneeSuggestion(input: {
@@ -68,21 +71,24 @@ export function useAssigneeSuggestion(input: {
     return () => clearTimeout(timer);
   }, [auto, input.text]);
 
-  const { data: routines } = useQuery({
+  const routinesQuery = useQuery({
     queryKey: queryKeys.routines.list(companyId!),
     queryFn: () => routinesApi.list(companyId!),
     enabled: Boolean(companyId) && auto,
     staleTime: 60_000,
   });
-  const { data: availability } = useQuery({
+  const routines = routinesQuery.data;
+  const availabilityQuery = useQuery({
     queryKey: ["decision-model", "availability", companyId],
     queryFn: () => decisionModelsApi.availability(companyId!),
     enabled: Boolean(companyId) && auto,
     staleTime: 60_000,
   });
+  const availability = availabilityQuery.data;
 
   const computed = useMemo(
-    () => (auto && text.trim() ? suggestAssignee({ text, agents, routines: routines ?? [], assignableUserIds, unavailableAgentIds }) : null),
+    // Routines are part of what an agent is known for; a match made without them could pick the wrong agent.
+    () => (auto && routines && text.trim() ? suggestAssignee({ text, agents, routines, assignableUserIds, unavailableAgentIds }) : null),
     [auto, text, agents, routines, assignableUserIds, unavailableAgentIds],
   );
   // Callers may pass fresh arrays on every render; only a different suggestion counts as a change.
@@ -106,7 +112,7 @@ export function useAssigneeSuggestion(input: {
   }, [auto]);
 
   // Follow the words once typing has paused, until a model has been asked to choose.
-  const settled = text === input.text;
+  const settled = text === input.text && routines !== undefined;
   useEffect(() => {
     if (!auto || !settled || appliedRef.current?.source === "model") return;
     if (fromWords) {
@@ -178,6 +184,11 @@ export function useAssigneeSuggestion(input: {
     askingModel: ask.isPending,
     modelNote: auto ? modelNote : null,
     unavailableAgentIds,
+    loadFailed: auto && input.text.trim().length > 0 && (routinesQuery.isError || availabilityQuery.isError),
+    retryLoad: () => {
+      if (routinesQuery.isError) void routinesQuery.refetch();
+      if (availabilityQuery.isError) void availabilityQuery.refetch();
+    },
   };
 }
 
@@ -199,8 +210,8 @@ export function AssigneeSuggestionNotice({ state, nameOf, onChoose, disabled }: 
   onChoose: (value: string) => void;
   disabled?: boolean;
 }) {
-  const { applied, previousValue, canAskModel, askModel, askingModel, modelNote } = state;
-  if (!applied && !canAskModel && !askingModel && !modelNote) return null;
+  const { applied, previousValue, canAskModel, askModel, askingModel, modelNote, loadFailed, retryLoad } = state;
+  if (!applied && !canAskModel && !askingModel && !modelNote && !loadFailed) return null;
 
   const suggestion = applied?.suggestion;
   const targetName = suggestion ? nameOf(valueOf(suggestion.target)) : null;
@@ -246,6 +257,12 @@ export function AssigneeSuggestionNotice({ state, nameOf, onChoose, disabled }: 
         </p>
       ) : modelNote ? (
         <p>{modelNote}</p>
+      ) : null}
+      {loadFailed ? (
+        <p role="alert" className="flex flex-wrap items-center gap-1.5">
+          Couldn't load assignee suggestions.
+          <Button type="button" variant="ghost" size="xs" onClick={retryLoad}>Retry</Button>
+        </p>
       ) : null}
       {alternatives.length > 0 || canAskModel || askingModel ? (
         <div className="flex flex-wrap items-center gap-1.5">
