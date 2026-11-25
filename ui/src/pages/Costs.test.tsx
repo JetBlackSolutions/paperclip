@@ -322,6 +322,54 @@ describe("Shared Costs surfaces", () => {
     queryClient.clear();
   });
 
+  it.each(surfaces)("uses exact rolling dates for usage and charges on the %s page", async (_name, props) => {
+    // November crosses the UTC calendar-month and North American DST boundaries.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const now = "2026-11-07T17:14:00.000Z";
+    vi.setSystemTime(new Date(now));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    try {
+      for (const mock of Object.values(costsApiMocks)) mock.mockResolvedValue([]);
+      costsApiMocks.byUser.mockResolvedValue({ activeUserCount: 1, rows: [] });
+      costsApiMocks.summary.mockResolvedValue({ spendCents: 0, budgetCents: 0, pricingComplete: true });
+      costsApiMocks.financeSummary.mockResolvedValue({ netCents: 0, debitCents: 0, creditCents: 0, estimatedDebitCents: 0, eventCount: 0 });
+      const report = await subscriptionsMocks.report();
+      const charges = [
+        ["2026-11-07T16:00:00.000Z", 200],
+        ["2026-10-31T17:14:00.000Z", 300],
+        ["2026-10-31T17:13:59.999Z", 400],
+        ["2026-10-08T17:13:59.999Z", 500],
+      ] as const;
+      subscriptionsMocks.report.mockImplementation(async (_company: string, from: string, to: string) => ({
+        ...report,
+        api: { ...report.api, costCents: String(charges
+          .filter(([at]) => from <= at && at <= to)
+          .reduce((total, [, cents]) => total + cents, 0)) },
+      }));
+      root = createRoot(container);
+      await act(async () => root.render(<MemoryRouter><QueryClientProvider client={queryClient}><Costs {...props} /></QueryClientProvider></MemoryRouter>));
+      const apiSpend = () => [...container.querySelectorAll("div")].find(node => node.textContent === "API spend")?.closest('[data-slot="card"]');
+      await act(async () => { await vi.waitFor(() => expect(apiSpend()?.textContent).toContain("$2.00")); });
+      expect(container.textContent).toContain("Budget limits and active incidents use their own windows");
+      for (const [label, from, total] of [
+        ["7 Days", "2026-10-31T17:14:00.000Z", "$5.00"],
+        ["30 Days", "2026-10-08T17:14:00.000Z", "$9.00"],
+      ]) {
+        const button = [...container.querySelectorAll("button")].find(node => node.textContent === label)!;
+        await act(async () => button.click());
+        await act(async () => { await vi.waitFor(() => expect(apiSpend()?.textContent).toContain(total)); });
+        expect(button.getAttribute("aria-pressed")).toBe("true");
+        expect(subscriptionsMocks.report).toHaveBeenLastCalledWith("company-1", from, now);
+        expect(costsApiMocks.financeSummary).toHaveBeenLastCalledWith("company-1", from, now);
+        expect(costsApiMocks.summary).toHaveBeenLastCalledWith("company-1", from, now);
+      }
+      expect(budgetOverviewMock).toHaveBeenCalledTimes(1);
+    } finally {
+      queryClient.clear();
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps monthly subscription fees through date changes and failed background reloads", async () => {
     for (const mock of Object.values(costsApiMocks)) mock.mockResolvedValue([]);
     costsApiMocks.byUser.mockResolvedValue({ activeUserCount: 1, rows: [] });
