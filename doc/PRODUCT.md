@@ -532,3 +532,16 @@ actual bill. A background worker applies threshold holds and scoped Stop intent.
 Manual Stop and authorization remain independently enforced. Unknown charges
 remain visible, and stale unevaluated accounting blocks new limited-budget work
 until reconciliation catches up.
+
+
+### Manual execution controls
+
+Authorized board administrators can pause organization or individual agent work
+from Audit → Budgets without editing a spending limit. This also requests Stop
+for active agent runs; already-incurred charges can still be recorded. A project
+pause blocks new project work. It does not send Stop to runs that already started or pause the project's
+agents on other work.
+
+Resume releases a manual pause only. A budget hard stop or another independent
+hold remains enforceable. Changes are scoped to the organization and appear in
+its activity log. The organization control is available even without a cap.

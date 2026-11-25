@@ -16,6 +16,10 @@ import {
   nativeRunFinalizations,
   projects,
 } from "@paperclipai/db";
+import { applyAgentBudgetHoldInTransaction, createAgentLifecycle } from "../services/agent-lifecycle.js";
+import { withAccountingTransaction } from "../services/accounting-transaction.js";
+import { companyService } from "../services/companies.js";
+import { setProjectExecutionPause } from "../services/project-execution-pause.js";
 import { budgetService, deliverBudgetEnforcement, hasPendingBudgetEnforcement, flushBudgetEvaluationWork } from "../services/budgets.ts";
 import {
   EMBEDDED_POSTGRES_TEST_TIMEOUT_MS,
@@ -97,6 +101,71 @@ describeEmbeddedPostgres("budgetService release gate enforcement", () => {
 
     return { companyId, agentId, projectId };
   }
+
+  it("pauses organization work without a cap and does not resume another hold", async () => {
+    const { companyId, agentId } = await createBudgetFixture();
+    const companiesService = companyService(db);
+    const actor = { actorType: "user", actorId: "board" } as const;
+    const service = budgetService(db);
+    await db.update(agents).set({ status: "paused", lifecycleState: "paused", lifecycleHolds: ["manual"], pauseReason: "manual" })
+      .where(eq(agents.id, agentId));
+    const [working] = await db.insert(agents).values({
+      companyId, name: "Working agent", role: "engineer", status: "running", adapterType: "codex_local",
+      adapterConfig: {}, runtimeConfig: {}, permissions: {},
+    }).returning();
+    await db.insert(heartbeatRuns).values({ companyId, agentId: working.id, scopeKind: "company", status: "running" });
+    await expect(companiesService.update(companyId, {}, actor, "pause"))
+      .resolves.toMatchObject({ status: "paused", pauseReason: "manual", budgetMonthlyCents: 0 });
+    expect(await service.getInvocationBlock(companyId, agentId)).toMatchObject({ scopeType: "company" });
+    const [fenced] = await db.select().from(agents).where(eq(agents.id, working.id));
+    expect(fenced.lifecycleState).toBe("pausing");
+    expect(fenced.lifecycleHolds).toContain("company_paused");
+    expect((await service.overview(companyId, true)).organizationExecution).toEqual({ action: "resume" });
+    expect((await service.overview(companyId)).organizationExecution).toBeUndefined();
+    await expect(companiesService.update(companyId, { status: "active" }, actor)).rejects.toMatchObject({ status: 409 });
+    await expect(companiesService.update(companyId, {}, actor, "resume"))
+      .resolves.toMatchObject({ status: "active", pauseReason: null, pausedAt: null, budgetMonthlyCents: 0 });
+    const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
+    expect(agent.lifecycleHolds).toContain("manual");
+    await db.update(companies).set({ status: "paused", pauseReason: "budget", pausedAt: new Date() }).where(eq(companies.id, companyId));
+    await expect(companiesService.update(companyId, {}, actor, "resume")).rejects.toMatchObject({ status: 409 });
+    expect((await companiesService.getById(companyId))?.pauseReason).toBe("budget");
+  });
+
+  it("gates only the selected project and preserves a hard stop discovered while manual pause is active", async () => {
+    const { companyId, agentId, projectId } = await createBudgetFixture();
+    const service = budgetService(db);
+    const input = { scopeType: "project", scopeId: projectId, windowKind: "lifetime", amount: 100 } as const;
+    await service.upsertPolicy(companyId, input, null);
+    await setProjectExecutionPause(db, companyId, projectId, "pause", "board");
+    expect(await service.getInvocationBlock(companyId, agentId, { projectId })).toMatchObject({ scopeType: "project", scopeId: projectId });
+    expect(await service.getInvocationBlock(companyId, agentId)).toBeNull();
+    await expect(setProjectExecutionPause(db, companyId, randomUUID(), "resume", "board")).rejects.toMatchObject({ status: 404 });
+    const other = await createBudgetFixture();
+    await expect(setProjectExecutionPause(db, other.companyId, projectId, "resume", "board")).rejects.toMatchObject({ status: 404 });
+    await insertCostEvent({ companyId, agentId, projectId, costCents: 125 });
+    await expect(setProjectExecutionPause(db, companyId, projectId, "resume", "board")).rejects.toMatchObject({ status: 409 });
+    const [held] = await db.select().from(projects).where(eq(projects.id, projectId));
+    expect(held.pauseReason).toBe("manual");
+    expect((await service.overview(companyId)).policies.find(policy => policy.scopeId === projectId)).toMatchObject({ amount: 100 });
+    await service.upsertPolicy(companyId, { ...input, amount: 200 }, null);
+    await setProjectExecutionPause(db, companyId, projectId, "resume", "board");
+    expect(await service.getInvocationBlock(companyId, agentId, { projectId })).toBeNull();
+    expect((await service.overview(companyId)).policies.find(policy => policy.scopeId === projectId)).toMatchObject({ amount: 200 });
+  });
+
+  it("removes only the manual agent hold and refuses a stale agent resume", async () => {
+    const { companyId, agentId } = await createBudgetFixture();
+    const lifecycle = createAgentLifecycle(db);
+    await lifecycle.setManualExecutionPause(agentId, true);
+    await withAccountingTransaction(db, companyId, (tx, publications) =>
+      applyAgentBudgetHoldInTransaction(tx, companyId, agentId, true, publications));
+    await lifecycle.setManualExecutionPause(agentId, false);
+    const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
+    expect(agent.lifecycleHolds).toEqual(["budget"]);
+    expect(agent.pauseReason).toBe("budget");
+    await expect(lifecycle.setManualExecutionPause(agentId, false)).rejects.toThrow("does not have a manual pause");
+  });
 
   async function insertCostEvent(input: {
     companyId: string;

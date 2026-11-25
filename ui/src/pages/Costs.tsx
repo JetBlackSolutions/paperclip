@@ -11,6 +11,7 @@ import { AgentIdentity } from "@/components/AgentIdentity";
 import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  BudgetExecutionControlInput,
   BudgetPolicySummary,
   CostByAgentModel,
   CostByBiller,
@@ -45,6 +46,18 @@ import { billingTypeDisplayName, cn, formatCents, formatTokens, providerDisplayN
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
+type ExecutionTarget = BudgetExecutionControlInput & { companyId: string; name: string };
+
+function executionActionLabel(scopeType: BudgetExecutionControlInput["scopeType"], action: BudgetExecutionControlInput["action"]) {
+  if (scopeType === "company") return action === "pause" ? "Pause all agent work" : "Resume organization work";
+  if (scopeType === "project") return action === "pause" ? "Pause new project work" : "Resume project work";
+  return action === "pause" ? "Pause agent" : "Resume agent";
+}
 
 const NO_COMPANY = "__none__";
 export type CostsMainTab = "overview" | "budgets" | "providers" | "billers" | "finance" | "decisions" | "fast-responses";
@@ -287,6 +300,25 @@ export function Costs({
     }),
     onSuccess: invalidateBudgetViews,
   });
+
+  const [executionTarget, setExecutionTarget] = useState<ExecutionTarget | null>(null);
+  const executionSelection = executionTarget?.companyId === companyId ? executionTarget : null;
+  const executionMutation = useMutation({
+    mutationFn: ({ companyId: targetCompanyId, scopeType, scopeId, action }: ExecutionTarget) =>
+      budgetsApi.setExecution(targetCompanyId, { scopeType, scopeId, action }),
+    onSettled: (_result, _error, target) => Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.budgets.overview(target.companyId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(target.companyId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(target.companyId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.all(target.companyId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.companies.all }),
+    ]),
+  });
+
+  const openExecutionControl = (input: BudgetExecutionControlInput, name: string) => {
+    executionMutation.reset();
+    setExecutionTarget({ ...input, companyId, name });
+  };
 
   const incidentMutation = useMutation({
     mutationFn: (input: { incidentId: string; action: "keep_paused" | "raise_budget_and_resume"; amount?: number }) =>
@@ -923,6 +955,9 @@ export function Costs({
         </TabsContent>
 
         <TabsContent value="budgets" className="mt-4 space-y-4">
+          {executionMutation.isError && executionMutation.variables?.companyId === companyId && (
+            <p role="alert" className="text-sm text-destructive">Could not change execution state. Check the current pause or budget status before trying again.</p>
+          )}
           {policyMutation.error && <p role="alert" className="text-sm text-destructive">Could not update the budget policy. Review your settings and try again.</p>}
           {budgetLoading ? (
             <PageSkeleton variant="costs" />
@@ -935,6 +970,22 @@ export function Costs({
                     Hard-stop spend limits for agents and projects. Provider subscription quota stays separate and appears under Providers.
                   </CardDescription>
                 </CardHeader>
+                {budgetData?.organizationExecution && (
+                  <CardContent className="flex flex-wrap items-center gap-3 px-5 pb-4 pt-0">
+                    {budgetData.organizationExecution.action ? (
+                      <Button variant="outline" disabled={executionMutation.isPending || !!budgetError}
+                        onClick={() => {
+                          const action = budgetData.organizationExecution?.action;
+                          if (action) openExecutionControl({ scopeType: "company", scopeId: companyId, action }, "this organization");
+                        }}>
+                        {executionActionLabel("company", budgetData.organizationExecution.action)}
+                      </Button>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">An existing hold or organization status prevents a manual pause or resume.</span>
+                    )}
+                    <span className="text-sm text-muted-foreground">Execution controls do not change budget limits.</span>
+                  </CardContent>
+                )}
                 <CardContent className="grid gap-3 px-5 pb-5 pt-0 md:grid-cols-4">
                   <MetricTile
                     label="Active incidents"
@@ -951,13 +1002,13 @@ export function Costs({
                   <MetricTile
                     label="Paused agents"
                     value={String(budgetData?.pausedAgentCount ?? 0)}
-                    subtitle="Agent heartbeats blocked by budget"
+                    subtitle="Agent heartbeats paused"
                     icon={Coins}
                   />
                   <MetricTile
                     label="Paused projects"
                     value={String(budgetData?.pausedProjectCount ?? 0)}
-                    subtitle="Project execution blocked by budget"
+                    subtitle="New project work paused"
                     icon={DollarSign}
                   />
                 </CardContent>
@@ -1011,6 +1062,17 @@ export function Costs({
                           <BudgetPolicyCard
                             key={summary.policyId}
                             summary={summary}
+                            executionControl={budgetData?.organizationExecution && scopeType !== "company" && summary.executionAction && (
+                              <Button variant="outline" disabled={executionMutation.isPending || !!budgetError}
+                                aria-label={`${executionActionLabel(scopeType, summary.executionAction)}: ${summary.scopeName}`}
+                                onClick={() => {
+                                  if (summary.executionAction) openExecutionControl(
+                                    { scopeType, scopeId: summary.scopeId, action: summary.executionAction }, summary.scopeName,
+                                  );
+                                }}>
+                                {executionActionLabel(scopeType, summary.executionAction)}
+                              </Button>
+                            )}
                             onReservationChange={(reservationCents) => policyMutation.mutate({ summary, changes: { reservationCents } })}
                             onUnpricedUsagePolicyChange={(unpricedUsagePolicy) => policyMutation.mutate({ summary, changes: { unpricedUsagePolicy } })}
                             isSaving={policyMutation.isPending}
@@ -1034,6 +1096,28 @@ export function Costs({
             </>
           )}
         </TabsContent>
+
+        <AlertDialog open={executionSelection !== null} onOpenChange={open => { if (!open) setExecutionTarget(null); }}>
+          {executionSelection && <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{executionActionLabel(executionSelection.scopeType, executionSelection.action)}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {executionSelection.action === "resume"
+                  ? `Release the manual pause for ${executionSelection.name}. Eligible queued work may start. Budget and other holds still apply.`
+                  : executionSelection.scopeType === "project"
+                    ? `Stop new work for ${executionSelection.name}. This does not send a Stop request to runs that already started. Other projects and budget limits are unchanged.`
+                    : `Pause work for ${executionSelection.name} and request that active runs stop. Costs already incurred may still post. Budget limits are unchanged.`}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction disabled={executionMutation.isPending || !!budgetError || !budgetData?.organizationExecution}
+                onClick={() => executionMutation.mutate(executionSelection)}>
+                {executionSelection.action === "pause" ? "Confirm pause" : "Confirm resume"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>}
+        </AlertDialog>
 
         <TabsContent value="providers" className="mt-4 space-y-4">
           {showCustomPrompt ? (

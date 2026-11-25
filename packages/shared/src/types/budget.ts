@@ -28,6 +28,13 @@ export interface BudgetPolicy {
   updatedAt: Date;
 }
 
+export type BudgetExecutionAction = "pause" | "resume";
+export interface BudgetExecutionControlInput {
+  scopeType: BudgetScopeType;
+  scopeId: string;
+  action: BudgetExecutionAction;
+}
+
 export interface BudgetPolicySummary {
   policyId: string;
   companyId: string;
@@ -52,6 +59,7 @@ export interface BudgetPolicySummary {
   status: "ok" | "warning" | "hard_stop";
   paused: boolean;
   pauseReason: PauseReason | null;
+  executionAction?: BudgetExecutionAction | null;
   windowStart: Date;
   windowEnd: Date;
 }
@@ -80,6 +88,8 @@ export interface BudgetIncident {
 
 export interface BudgetOverview {
   companyId: string;
+  /** Present for board operators who can change execution state. */
+  organizationExecution?: { action: BudgetExecutionAction | null };
   policies: BudgetPolicySummary[];
   activeIncidents: BudgetIncident[];
   pausedAgentCount: number;

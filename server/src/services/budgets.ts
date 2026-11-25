@@ -28,6 +28,7 @@ import type {
   BudgetIncidentResolutionInput,
   BudgetMetric,
   BudgetOverview,
+  BudgetExecutionAction,
   PauseReason,
   BudgetPolicy,
   BudgetPolicySummary,
@@ -54,6 +55,7 @@ type ScopeRecord = {
   paused: boolean;
   pauseReason: PauseReason | null;
   budgetHeld: boolean;
+  executionAction?: BudgetExecutionAction | null;
 };
 
 type PolicyRow = typeof budgetPolicies.$inferSelect;
@@ -129,6 +131,8 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
       paused: row.status === "paused" || Boolean(row.pausedAt),
       pauseReason: (row.pauseReason as ScopeRecord["pauseReason"]) ?? null,
       budgetHeld: row.pauseReason === "budget",
+      executionAction: row.status === "active" && !row.pauseReason && !row.pausedAt ? "pause"
+        : row.status === "paused" && row.pauseReason === "manual" ? "resume" : null,
     };
   }
 
@@ -140,6 +144,7 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
         status: agents.status,
         pauseReason: agents.pauseReason,
         lifecycleHolds: agents.lifecycleHolds,
+        lifecycleState: agents.lifecycleState,
       })
       .from(agents)
       .where(eq(agents.id, scopeId))
@@ -151,6 +156,8 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
       paused: row.status === "paused",
       pauseReason: (row.pauseReason as ScopeRecord["pauseReason"]) ?? null,
       budgetHeld: row.lifecycleHolds.includes("budget"),
+      executionAction: row.lifecycleHolds.includes("manual") && ["paused", "pausing"].includes(row.lifecycleState) ? "resume"
+        : !row.lifecycleHolds.length && ["ready", "resuming"].includes(row.lifecycleState) ? "pause" : null,
     };
   }
 
@@ -160,6 +167,7 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
       name: projects.name,
       pauseReason: projects.pauseReason,
       pausedAt: projects.pausedAt,
+      archivedAt: projects.archivedAt,
     })
     .from(projects)
     .where(eq(projects.id, scopeId))
@@ -171,6 +179,9 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
     paused: Boolean(row.pausedAt),
     pauseReason: (row.pauseReason as ScopeRecord["pauseReason"]) ?? null,
     budgetHeld: row.pauseReason === "budget",
+    executionAction: row.archivedAt ? null
+      : !row.pausedAt && !row.pauseReason ? "pause"
+      : row.pausedAt && row.pauseReason === "manual" ? "resume" : null,
   };
 }
 
@@ -261,6 +272,17 @@ function hardStopReached(policy: PolicyRow, observed: Awaited<ReturnType<typeof 
 export async function policyBlocks(db: Db, policy: PolicyRow) {
   if (!policy.isActive || !policy.hardStopEnabled || policy.amount <= 0) return false;
   return hardStopReached(policy, await computeObservedSpend(db, policy));
+}
+
+/** A manual scope pause may have prevented the budget evaluator from projecting
+ * its own pause reason. Recheck actual policies before releasing it. */
+export async function scopeHasBudgetHardStop(db: Db, companyId: string, scopeType: BudgetScopeType, scopeId: string) {
+  const policies = await db.select().from(budgetPolicies).where(and(
+    eq(budgetPolicies.companyId, companyId), eq(budgetPolicies.scopeType, scopeType),
+    eq(budgetPolicies.scopeId, scopeId), eq(budgetPolicies.isActive, true), eq(budgetPolicies.hardStopEnabled, true),
+  ));
+  const observed = await computeObservedSpends(db, policies, new Date());
+  return policies.some((policy, index) => hardStopReached(policy, observed[index]));
 }
 
 /** Supplemental handoff check after authoritative accounting admission commits.
@@ -523,6 +545,7 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
         : "ok",
       paused: scope.paused,
       pauseReason: scope.pauseReason,
+      executionAction: scope.executionAction ?? null,
       windowStart: start,
       windowEnd: end,
     };
@@ -993,12 +1016,14 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
     /** The `activeIncidents` of `overview`, without the spend of every policy. */
     openIncidents: listOpenIncidents,
 
-    overview: async (companyId: string): Promise<BudgetOverview> => {
+    overview: async (companyId: string, showExecution = false): Promise<BudgetOverview> => {
       const rows = await listPolicyRows(companyId);
       const policies = await mapBudgetReads(rows, buildPolicySummary);
       const activeIncidents = await listOpenIncidents(companyId);
+      const organization = showExecution ? await resolveScopeRecord(db, "company", companyId) : null;
       return {
         companyId,
+        ...(organization ? { organizationExecution: { action: organization.executionAction ?? null } } : {}),
         policies,
         activeIncidents,
         pausedAgentCount: new Set(policies.filter((policy) => policy.scopeType === "agent" && policy.paused).map((policy) => policy.scopeId)).size,
@@ -1377,8 +1402,8 @@ export function budgetService(db: Db, _hooks: BudgetServiceHooks = {}) {
   return {
     listPolicies: (companyId: string) => withAccountingReadSnapshot(db, companyId,
       tx => budgetServiceInTransaction(tx).listPolicies(companyId)),
-    overview: (companyId: string) => withAccountingReadSnapshot(db, companyId,
-      tx => budgetServiceInTransaction(tx).overview(companyId)),
+    overview: (companyId: string, showExecution = false) => withAccountingReadSnapshot(db, companyId,
+      tx => budgetServiceInTransaction(tx).overview(companyId, showExecution)),
     openIncidents: (companyId: string) => withAccountingReadSnapshot(db, companyId,
       tx => budgetServiceInTransaction(tx).openIncidents(companyId)),
     evaluateAdmission: (companyId: string, agentId: string | null, context?: AdmissionContext) =>

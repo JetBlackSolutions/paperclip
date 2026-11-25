@@ -4,14 +4,13 @@ import { agents, agentApiKeys, companies, budgetPolicies, type Db } from "@paper
 import type { AgentLifecycleOperation } from "@paperclipai/shared";
 import { AgentLifecycleConflict, canConfigureAgentConnection, compatibilityStatus, isLifecycleWorkPending, transition, type LifecycleCommand } from "../domain/policy.js";
 import type { LifecycleEffects } from "./effects.js";
-import type { LifecycleStore } from "../application/ports.js";
+import type { LifecycleChangeOptions, LifecycleStore } from "../application/ports.js";
 
 export function assertRootDatabase(db: Db) {
   if ("nestedIndex" in db) throw new AgentLifecycleConflict("Lifecycle commands require the root database connection");
 }
 
 type LifecycleRow = typeof agents.$inferSelect;
-type ChangeOptions = { version?: number; owner?: string; reason?: string };
 
 // Prepared drafts wait for the wizard; they have no background verification obligation.
 export const pendingLifecycleWork = and(
@@ -85,8 +84,17 @@ export async function requestAgentLifecycleRecheckInTransaction(
 
 /** The caller owns the accounting transaction and has locked this agent. */
 async function changeLockedAgent(tx: Db, effects: LifecycleEffects, agent: LifecycleRow,
-  command: LifecycleCommand, options: ChangeOptions = {}, policyHolds?: string[], restartPause = false) {
+  command: LifecycleCommand, options: LifecycleChangeOptions = {}, policyHolds?: string[], restartPause = false) {
   if (options.version !== undefined && options.version !== agent.lifecycleVersion) return null;
+  if (options.manualHoldOnly) {
+    const hasManual = agent.lifecycleHolds.includes("manual");
+    if (command === "resume" && (!hasManual || !["paused", "pausing"].includes(agent.lifecycleState))) {
+      throw new AgentLifecycleConflict("This agent does not have a manual pause to release");
+    }
+    if (command === "pause" && (hasManual || agent.lifecycleHolds.length || !["ready", "resuming"].includes(agent.lifecycleState))) {
+      throw new AgentLifecycleConflict("This agent already has a hold or is not ready to pause");
+    }
+  }
   if (command === "resume" && agent.lifecycleHolds.includes("setup")) throw new AgentLifecycleConflict("Finish agent setup before resuming");
   if (command === "complete" && (!options.owner || !agent.lifecycleOperation?.leaseUntil || agent.lifecycleOperation?.leaseOwner !== options.owner ||
     Date.parse(agent.lifecycleOperation?.leaseUntil ?? "") <= Date.now() ||
