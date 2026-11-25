@@ -32,6 +32,7 @@ function statusTone(status: BudgetPolicySummary["status"]) {
 export function BudgetPolicyCard({
   summary,
   onSave,
+  executionControl,
   onUnpricedUsagePolicyChange,
   onReservationChange,
   isSaving,
@@ -39,6 +40,7 @@ export function BudgetPolicyCard({
   variant = "card",
 }: {
   summary: BudgetPolicySummary;
+  executionControl?: React.ReactNode;
   onSave?: (amountCents: number) => void;
   onReservationChange?: (cents: string) => void;
   onUnpricedUsagePolicyChange?: (policy: "block" | "allow") => void;
@@ -165,9 +167,11 @@ export function BudgetPolicyCard({
     <div className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-900 dark:text-red-100">
       <PauseCircle className="mt-0.5 h-4 w-4 shrink-0" />
       <div>
-        {summary.scopeType === "project"
-          ? "Execution is paused for this project until the budget block is resolved."
-          : "Heartbeats are paused for this scope until the budget block is resolved."}
+        {summary.pauseReason === "manual"
+          ? "Work is paused manually. The budget limit is unchanged."
+          : summary.pauseReason === "budget"
+            ? "Work is paused until the budget block is resolved."
+            : "A separate hold is keeping work paused."}
       </div>
     </div>
   ) : null;
@@ -226,6 +230,7 @@ export function BudgetPolicyCard({
         {observedBudgetGrid}
         {progressSection}
         {pausedPane}
+        {executionControl}
         {saveSection}
         {advancedSettings}
         {parsedDraft === null ? (
@@ -256,6 +261,7 @@ export function BudgetPolicyCard({
         {observedBudgetGrid}
         {progressSection}
         {pausedPane}
+        {executionControl}
         {saveSection}
         {advancedSettings}
         {parsedDraft === null ? (

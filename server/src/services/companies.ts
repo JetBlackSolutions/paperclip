@@ -12,7 +12,7 @@ import { isRunnerApiResponseAsset } from "./asset-content-access.js";
 import { deleteCompany } from "./company-deletion.js";
 import { fenceActiveCompanyAgentStopsInTransaction } from "./agent-lifecycle.js";
 import { publishAccountingActivities } from "./accounting-transaction.js";
-import { budgetServiceInTransaction, type BudgetServiceHooks } from "./budgets.js";
+import { budgetServiceInTransaction, scopeHasBudgetHardStop, type BudgetServiceHooks } from "./budgets.js";
 import { and, count, eq, gte, inArray, isNull, lt, notInArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
@@ -25,7 +25,7 @@ import {
   heartbeatRuns,
   costEvents,
 } from "@paperclipai/db";
-import { notFound, unprocessable } from "../errors.js";
+import { conflict, notFound, unprocessable } from "../errors.js";
 import { isCloudManagedInstance } from "./cloud-instance.js";
 import { notifyCloudOfPrimaryCompanyLifecycleChange } from "./cloud-lifecycle-sync.js";
 import {
@@ -39,7 +39,7 @@ import {
 import { environmentService } from "./environments.js";
 import { logActivity, type ActivityPublication } from "./activity-log.js";
 import { builtInAgentService } from "./built-in-agents.js";
-import type { Company } from "@paperclipai/shared";
+import type { BudgetExecutionAction, Company } from "@paperclipai/shared";
 
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -313,10 +313,11 @@ export function companyService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
       id: string,
       data: Partial<typeof companies.$inferInsert> & { logoAssetId?: string | null },
       actor: CompanyActivityActor = SYSTEM_COMPANY_ACTOR,
+      executionAction?: BudgetExecutionAction,
     ) => {
       const budgetPublications: ActivityPublication[] = [];
       const result = await db.transaction(async (tx) => {
-        if (data.status !== undefined || data.budgetMonthlyCents !== undefined) {
+        if (executionAction || data.status !== undefined || data.budgetMonthlyCents !== undefined) {
           await tx.select({ id: companies.id }).from(companies).where(eq(companies.id, id)).for("no key update");
         }
         const existing = await getCompanyQuery(tx)
@@ -325,6 +326,29 @@ export function companyService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
         if (!existing) return null;
 
         const { logoAssetId, ...companyPatch } = data;
+        if (executionAction === "pause") {
+          if (existing.status !== "active" || existing.pauseReason || existing.pausedAt) {
+            throw conflict("Organization work already has a hold or is not active");
+          }
+          companyPatch.status = "paused";
+          companyPatch.pauseReason = "manual";
+          companyPatch.pausedAt = new Date();
+        } else if (executionAction === "resume") {
+          if (existing.status !== "paused" || existing.pauseReason !== "manual") {
+            throw conflict("This organization does not have a manual pause to release");
+          }
+          if (await scopeHasBudgetHardStop(tx as unknown as Db, id, "company", id)) {
+            throw conflict("Resolve the organization budget hard stop before resuming work");
+          }
+          companyPatch.status = "active";
+          companyPatch.pauseReason = null;
+          companyPatch.pausedAt = null;
+        } else if (existing.pauseReason === "manual" && companyPatch.status === "active" && existing.status === "paused") {
+          throw conflict("Resume organization work from the Budgets page");
+        } else if (existing.pauseReason === "manual" && companyPatch.status === "archived") {
+          companyPatch.pauseReason = null;
+          companyPatch.pausedAt = null;
+        }
         const willReactivate = existing.status !== "active" && companyPatch.status === "active";
         const willArchive = existing.status !== "archived" && companyPatch.status === "archived";
 
@@ -438,6 +462,14 @@ export function companyService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
           logoAssetId: logoAssetId === undefined ? existing.logoAssetId : logoAssetId,
         }], tx);
 
+        if (executionAction) {
+          await logActivity(tx as unknown as Db, {
+            companyId: id, actorType: actor.actorType, actorId: actor.actorId,
+            action: "company.updated", entityType: "company", entityId: id,
+            details: { status: companyPatch.status, reason: "manual_execution", executionAction },
+          }, budgetPublications);
+        }
+
         const shouldLogReactivation = willReactivate &&
           (existing.status === "archived" || agentsRestored > 0);
 
@@ -499,7 +531,7 @@ export function companyService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
     archive: async (id: string, actor: CompanyActivityActor = SYSTEM_COMPANY_ACTOR) => {
       const result = await db.transaction(async (tx) => {
         const existing = await tx
-          .select({ status: companies.status })
+          .select({ status: companies.status, pauseReason: companies.pauseReason })
           .from(companies)
           .where(eq(companies.id, id))
           .for("no key update")
@@ -523,7 +555,8 @@ export function companyService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
           await notifyDeliveryWork(tx, DELIVERY_QUEUES.agentLifecycle, id);
           await tx
             .update(companies)
-            .set({ status: "archived", updatedAt: new Date() })
+            .set({ status: "archived", updatedAt: new Date(),
+              ...(existing.pauseReason === "manual" ? { pauseReason: null, pausedAt: null } : {}) })
             .where(eq(companies.id, id));
         }
 

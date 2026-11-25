@@ -55,6 +55,7 @@ export {
 
 export {
   upsertBudgetPolicySchema,
+  budgetExecutionControlSchema,
   resolveBudgetIncidentSchema,
   type UpsertBudgetPolicy,
   type ResolveBudgetIncident,

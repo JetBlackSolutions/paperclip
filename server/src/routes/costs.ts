@@ -9,10 +9,14 @@ import { accountingIntegrityService } from "../services/accounting-integrity.js"
 import { costDataQualityReport } from "../services/cost-data-quality.js";
 import { billingReconciliationService } from "../services/billing-reconciliation.js";
 import { adjustCostSchema, importBillingInvoiceSchema, repairAccountingSchema, retryAccountingSchema } from "@paperclipai/shared";
-import { Router } from "express";
+import { Router, type Request } from "express";
+import { createAgentLifecycle } from "../services/agent-lifecycle.js";
+import { logActivity } from "../services/activity-log.js";
+import { setProjectExecutionPause } from "../services/project-execution-pause.js";
 import { z } from "zod";
 import type { Db } from "@paperclipai/db";
 import {
+  budgetExecutionControlSchema,
   createCostEventSchema,
   createFinanceEventSchema,
   normalizeIssueIdentifier,
@@ -34,10 +38,16 @@ import {
 import { assertBoard, assertCompanyAccess, getAccessibleResource, getActorInfo } from "./authz.js";
 import { fetchCompanyQuotaWindows } from "../services/quota-windows.js";
 import { attentionHandledDetails, attentionHandledFor } from "../services/attention-receipts.js";
-import { badRequest, forbidden } from "../errors.js";
+import { badRequest, conflict, forbidden, notFound } from "../errors.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 
 const reportDateSchema = z.union([z.iso.datetime({ offset: true }), z.iso.date()]);
+
+function canManageBudgetExecution(req: Request, companyId: string) {
+  return req.actor.type === "board" && (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin
+    || Boolean(req.actor.memberships?.some((member) => member.companyId === companyId && member.status === "active"
+      && (member.membershipRole === "owner" || member.membershipRole === "admin"))));
+}
 
 export function parseCostDateRange(query: Record<string, unknown>) {
   if (query.period !== undefined && query.period !== "all" && query.period !== "month") throw badRequest("invalid 'period'");
@@ -348,8 +358,38 @@ export function costRoutes(
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     if (!(await assertCompanyCostReadAllowed(req, res, companyId))) return;
-    const overview = await budgets.overview(companyId);
-    res.json(overview);
+    res.json(await budgets.overview(companyId, canManageBudgetExecution(req, companyId)));
+  });
+
+  router.post("/companies/:companyId/budgets/execution", validate(budgetExecutionControlSchema), async (req, res) => {
+    assertBoard(req);
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    if (!canManageBudgetExecution(req, companyId)) throw forbidden("Company admin access is required to pause or resume work");
+    const actorId = getActorInfo(req).actorId;
+    const { scopeType, scopeId, action } = budgetExecutionControlSchema.parse(req.body);
+
+    if (scopeType === "company") {
+      if (scopeId !== companyId) throw notFound("Organization not found");
+      const updated = await companies.update(companyId, {}, { actorType: "user", actorId }, action);
+      if (!updated) throw notFound("Organization not found");
+    } else if (scopeType === "project") {
+      await setProjectExecutionPause(db, companyId, scopeId, action, actorId);
+    } else {
+      const decision = await access.decide({ actor: req.actor, action: "agents:create", resource: { type: "company", companyId } });
+      if (!decision.allowed) throw forbidden(decision.explanation);
+      const agent = await agents.getById(scopeId);
+      if (!agent || agent.companyId !== companyId) throw notFound("Agent not found");
+      if (action === "resume" && agent.orgChainHealth?.status === "invalid_org_chain") {
+        throw conflict(agent.orgChainHealth.repairGuidance ?? "Repair this agent's reporting chain before resuming it");
+      }
+      if (!await createAgentLifecycle(db).setManualExecutionPause(scopeId, action === "pause")) throw notFound("Agent not found");
+      await logActivity(db, {
+        companyId, actorType: "user", actorId, action: "agent.updated", entityType: "agent", entityId: scopeId,
+        details: { reason: "manual_execution", executionAction: action },
+      });
+    }
+    res.json({ ok: true });
   });
 
   router.post(

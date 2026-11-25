@@ -23,6 +23,12 @@ export const upsertBudgetPolicySchema = z.object({
 
 export type UpsertBudgetPolicy = z.infer<typeof upsertBudgetPolicySchema>;
 
+export const budgetExecutionControlSchema = z.strictObject({
+  scopeType: z.enum(BUDGET_SCOPE_TYPES),
+  scopeId: z.string().guid(),
+  action: z.enum(["pause", "resume"]),
+});
+
 export const resolveBudgetIncidentSchema = z.object({
   action: z.enum(BUDGET_INCIDENT_RESOLUTION_ACTIONS),
   amount: z.number().int().nonnegative().max(2_147_483_647).optional(),

@@ -14,6 +14,7 @@ vi.mock("../api/agents", () => ({ agentsApi: { get: scopedAgentMock } }));
 const resolveIncidentMock = vi.hoisted(() => vi.fn());
 const upsertPolicyMock = vi.hoisted(() => vi.fn());
 const budgetOverviewMock = vi.hoisted(() => vi.fn());
+const setExecutionMock = vi.hoisted(() => vi.fn());
 const setBreadcrumbsMock = vi.hoisted(() => vi.fn());
 const decisionHistoryMock = vi.hoisted(() => vi.fn());
 const costsApiMocks = vi.hoisted(() => ({
@@ -39,6 +40,7 @@ vi.mock("../api/subscriptions", () => ({ subscriptionsApi: subscriptionsMocks })
 vi.mock("../api/budgets", () => ({
   budgetsApi: {
     overview: (...args: unknown[]) => budgetOverviewMock(...args),
+    setExecution: setExecutionMock,
     upsertPolicy: upsertPolicyMock,
     resolveIncident: resolveIncidentMock,
   },
@@ -170,6 +172,73 @@ describe("Shared Costs surfaces", () => {
     expect(container.querySelector('[role="tab"]')).toBeFalsy();
     expect(setBreadcrumbsMock).not.toHaveBeenCalled();
     for (const mock of Object.values(costsApiMocks)) expect(mock).not.toHaveBeenCalled();
+  });
+
+  it("confirms scoped execution changes without editing a budget", async () => {
+    const shared = { observedAmount: 1000, utilizationPercent: 10, remainingAmount: 9000, warnPercent: 80,
+      amount: 10000, status: "ok", pendingRunCount: 0, unpricedEventCount: 0 };
+    const agent = { ...shared, scopeType: "agent", scopeId: "agent-1", scopeName: "Support",
+      policyId: "a", windowKind: "calendar_month_utc", executionAction: "pause", paused: false, pauseReason: null };
+    const project = { ...shared, scopeType: "project", scopeId: "project-1", scopeName: "Migration",
+      policyId: "p", windowKind: "lifetime", executionAction: "pause", paused: false, pauseReason: null };
+    const blocked = { ...agent, scopeId: "budget-agent", scopeName: "Over limit", policyId: "b",
+      executionAction: null, paused: true, pauseReason: "budget", status: "hard_stop" };
+    const overview = { policies: [agent, project, blocked], activeIncidents: [], pendingApprovalCount: 0,
+      pausedAgentCount: 1, pausedProjectCount: 0, organizationExecution: { action: "pause" } };
+    budgetOverviewMock.mockResolvedValue(overview);
+    setExecutionMock.mockImplementation(async (_companyId, input) => {
+      if (input.scopeType === "company" && input.action === "pause") {
+        budgetOverviewMock.mockResolvedValue({ ...overview, organizationExecution: { action: "resume" } });
+      }
+      return { ok: true };
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    root = createRoot(container);
+    await act(async () => root.render(<MemoryRouter><QueryClientProvider client={queryClient}>
+      <Costs embedded initialTab="budgets" lockTab />
+    </QueryClientProvider></MemoryRouter>));
+
+    const button = (label: string, parent: ParentNode = document.body) => [...parent.querySelectorAll("button")]
+      .find(el => (el.getAttribute("aria-label") ?? el.textContent) === label);
+    await act(async () => { await vi.waitFor(() => expect(button("Pause all agent work")).toBeTruthy()); });
+    expect(button("Resume agent: Over limit")).toBeUndefined();
+    expect(button("Pause agent: Over limit")).toBeUndefined();
+    await act(async () => button("Pause all agent work")!.click());
+    expect(setExecutionMock).not.toHaveBeenCalled();
+    await act(async () => button("Cancel", document.querySelector('[role="alertdialog"]')!)!.click());
+    expect(setExecutionMock).not.toHaveBeenCalled();
+
+    for (const [label, scopeType, scopeId, action] of [
+      ["Pause all agent work", "company", "company-1", "pause"],
+      ["Resume organization work", "company", "company-1", "resume"],
+      ["Pause agent: Support", "agent", "agent-1", "pause"],
+      ["Pause new project work: Migration", "project", "project-1", "pause"],
+    ]) {
+      await act(async () => { await vi.waitFor(() => expect(button(label)?.disabled).toBe(false)); });
+      await act(async () => button(label)!.click());
+      const dialog = document.querySelector('[role="alertdialog"]')!;
+      if (scopeType === "project") expect(dialog.textContent).toContain("does not send a Stop request to runs that already started");
+      await act(async () => button(action === "pause" ? "Confirm pause" : "Confirm resume", dialog)!.click());
+      expect(setExecutionMock).toHaveBeenLastCalledWith("company-1", { scopeType, scopeId, action });
+    }
+    expect(setExecutionMock).toHaveBeenCalledTimes(4);
+    expect(upsertPolicyMock).not.toHaveBeenCalled();
+    expect(resolveIncidentMock).not.toHaveBeenCalled();
+    await act(async () => { queryClient.clear(); });
+  });
+
+  it("does not show execution controls to a read-only budget viewer", async () => {
+    budgetOverviewMock.mockResolvedValue({ policies: [], activeIncidents: [], pendingApprovalCount: 0,
+      pausedAgentCount: 0, pausedProjectCount: 0 });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    root = createRoot(container);
+    await act(async () => root.render(<MemoryRouter><QueryClientProvider client={queryClient}>
+      <Costs embedded initialTab="budgets" lockTab />
+    </QueryClientProvider></MemoryRouter>));
+    await act(async () => { await vi.waitFor(() => expect(container.textContent).toContain("Budget control plane")); });
+    expect(container.textContent).not.toContain("Pause all agent work");
+    expect(container.textContent).not.toContain("Resume organization work");
+    queryClient.clear();
   });
 
   it.each(surfaces)("shows unknown billing separately from complete prices only on the %s Overview", async (_name, props) => {

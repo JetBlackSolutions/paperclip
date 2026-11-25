@@ -293,6 +293,33 @@ describe("cost routes", () => {
     expect(parseCostLimit({ limit: "25" })).toBe(25);
   });
 
+  it("routes an authorized pause separately from cap edits", async () => {
+    const companyId = randomUUID();
+    const url = `/api/companies/${companyId}/budgets/execution`;
+    const app = createApp();
+    expect((await request(app).post(url).send({ scopeType: "company", scopeId: companyId, action: "pause" })).status).toBe(200);
+    expect(mockCompanyService.update).toHaveBeenCalledWith(companyId, {}, { actorType: "user", actorId: "board-user" }, "pause");
+    expect((await request(app).post(url).send({ scopeType: "company", scopeId: randomUUID(), action: "resume" })).status).toBe(404);
+    expect((await request(app).post(url).send({ scopeType: "company", scopeId: companyId, action: "pause", amount: 0 })).status).toBe(400);
+    expect(mockCompanyService.update).toHaveBeenCalledTimes(1);
+    expect(mockBudgetService.upsertPolicy).not.toHaveBeenCalled();
+  });
+
+  it("denies execution changes to agents, board members without admin access, and other companies", async () => {
+    const companyId = randomUUID();
+    const url = `/api/companies/${companyId}/budgets/execution`;
+    for (const actor of [
+      { type: "agent", companyId, agentId: randomUUID() },
+      { type: "board", source: "session", companyIds: [companyId], memberships: [{ companyId, status: "active", membershipRole: "viewer" }] },
+      { type: "board", source: "session", companyIds: [companyId], memberships: [{ companyId, status: "active", membershipRole: "member" }] },
+      { type: "board", source: "session", companyIds: [randomUUID()] },
+    ]) {
+      const res = await request(createAppWithActor(actor)).post(url).send({ scopeType: "company", scopeId: companyId, action: "pause" });
+      expect(res.status).toBe(403);
+    }
+    expect(mockCompanyService.update).not.toHaveBeenCalled();
+  });
+
   it("rejects company budget updates for board users outside the company", async () => {
     const app = createAppWithActor({
       type: "board",

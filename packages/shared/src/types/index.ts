@@ -898,6 +898,8 @@ export type {
   BudgetPolicySummary,
   BudgetIncident,
   BudgetOverview,
+  BudgetExecutionAction,
+  BudgetExecutionControlInput,
   BudgetPolicyUpsertInput,
   BudgetIncidentResolutionInput,
 } from "./budget.js";

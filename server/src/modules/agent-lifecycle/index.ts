@@ -111,6 +111,11 @@ export function createAgentLifecycle(db: Db, effects: LifecycleEffects) {
       scheduleAgentLifecycle(db, id);
       return agent;
     },
+    async setManualExecutionPause(id: string, pause: boolean) {
+      const result = await store.change(id, pause ? "pause" : "resume", { reason: "manual", manualHoldOnly: true });
+      if (result) scheduleAgentLifecycle(db, id);
+      return result !== null;
+    },
     pauseAgent: (id: string, reason = "manual") => change(id, "pause", reason),
     resumeAgent: (id: string, reason = "user") => change(id, "resume", reason),
     terminateAgent: (id: string) => change(id, "terminate"),
