@@ -356,7 +356,11 @@ describe("Shared Costs surfaces", () => {
         ["30 Days", "2026-10-08T17:14:00.000Z", "$9.00"],
       ]) {
         const button = [...container.querySelectorAll("button")].find(node => node.textContent === label)!;
-        await act(async () => button.click());
+        await act(async () => {
+          // waitFor advances Vitest's clock even when only Date is faked.
+          vi.setSystemTime(new Date(now));
+          button.click();
+        });
         await act(async () => { await vi.waitFor(() => expect(apiSpend()?.textContent).toContain(total)); });
         expect(button.getAttribute("aria-pressed")).toBe("true");
         expect(subscriptionsMocks.report).toHaveBeenLastCalledWith("company-1", from, now);
