@@ -184,7 +184,11 @@ describe("Shared Costs surfaces", () => {
     const blocked = { ...agent, scopeId: "budget-agent", scopeName: "Over limit", policyId: "b",
       executionAction: null, paused: true, pauseReason: "budget", status: "hard_stop" };
     const overview = { policies: [agent, project, blocked], activeIncidents: [], pendingApprovalCount: 0,
-      pausedAgentCount: 1, pausedProjectCount: 0, organizationExecution: { action: "pause" } };
+      pausedAgentCount: 1, pausedProjectCount: 0, organizationExecution: { action: "pause" },
+      unbudgetedExecution: [
+        { scopeType: "agent", scopeId: "uncapped-agent", name: "Support trainee", action: "pause" },
+        { scopeType: "project", scopeId: "uncapped-project", name: "Sandbox rollout", action: "resume" },
+      ] };
     budgetOverviewMock.mockResolvedValue(overview);
     setExecutionMock.mockImplementation(async (_companyId, input) => {
       if (input.scopeType === "company" && input.action === "pause") {
@@ -208,20 +212,28 @@ describe("Shared Costs surfaces", () => {
     await act(async () => button("Cancel", document.querySelector('[role="alertdialog"]')!)!.click());
     expect(setExecutionMock).not.toHaveBeenCalled();
 
+    const unbudgeted = container.querySelector("details")!;
+    expect(unbudgeted.open).toBe(false);
+    expect(unbudgeted.querySelector("summary")?.textContent).toContain("without budget policies");
+    await act(async () => unbudgeted.querySelector("summary")!.click());
+    expect(unbudgeted.open).toBe(true);
+
     for (const [label, scopeType, scopeId, action] of [
       ["Pause all agent work", "company", "company-1", "pause"],
       ["Resume organization work", "company", "company-1", "resume"],
       ["Pause agent: Support", "agent", "agent-1", "pause"],
       ["Pause new project work: Migration", "project", "project-1", "pause"],
+      ["Pause agent: Support trainee", "agent", "uncapped-agent", "pause"],
+      ["Resume project work: Sandbox rollout", "project", "uncapped-project", "resume"],
     ]) {
       await act(async () => { await vi.waitFor(() => expect(button(label)?.disabled).toBe(false)); });
       await act(async () => button(label)!.click());
       const dialog = document.querySelector('[role="alertdialog"]')!;
-      if (scopeType === "project") expect(dialog.textContent).toContain("does not send a Stop request to runs that already started");
+      if (scopeType === "project" && action === "pause") expect(dialog.textContent).toContain("does not send a Stop request to runs that already started");
       await act(async () => button(action === "pause" ? "Confirm pause" : "Confirm resume", dialog)!.click());
       expect(setExecutionMock).toHaveBeenLastCalledWith("company-1", { scopeType, scopeId, action });
     }
-    expect(setExecutionMock).toHaveBeenCalledTimes(4);
+    expect(setExecutionMock).toHaveBeenCalledTimes(6);
     expect(upsertPolicyMock).not.toHaveBeenCalled();
     expect(resolveIncidentMock).not.toHaveBeenCalled();
     await act(async () => { queryClient.clear(); });

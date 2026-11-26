@@ -90,6 +90,13 @@ export interface BudgetOverview {
   companyId: string;
   /** Present for board operators who can change execution state. */
   organizationExecution?: { action: BudgetExecutionAction | null };
+  /** Eligible agent/project controls not already shown on a policy card. */
+  unbudgetedExecution?: Array<{
+    scopeType: "agent" | "project";
+    scopeId: string;
+    name: string;
+    action: BudgetExecutionAction;
+  }>;
   policies: BudgetPolicySummary[];
   activeIncidents: BudgetIncident[];
   pausedAgentCount: number;

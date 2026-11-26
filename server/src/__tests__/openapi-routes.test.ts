@@ -457,6 +457,16 @@ describe("openapi routes", () => {
     for (const code of ["200", "400", "401", "403", "404"]) expect(operation.responses[code]).toBeDefined();
   });
 
+  it("documents manual budget execution as a board-only control", () => {
+    const spec = buildOpenApiSpec() as any;
+    const operation = spec.paths["/api/companies/{companyId}/budgets/execution"].post;
+    expect(operation.security).toEqual([{ BoardSessionAuth: [] }, { BoardApiKeyAuth: [] }]);
+    expect(operation["x-paperclip-authorization"]).toEqual({ actor: "board" });
+    const input = operation.requestBody.content["application/json"].schema;
+    expect(input.required).toEqual(["scopeType", "scopeId", "action"]);
+    for (const code of ["200", "400", "401", "403", "404", "409"]) expect(operation.responses[code]).toBeDefined();
+  });
+
   it("documents task-tree controls as board-only and names the human page", () => {
     const spec = buildOpenApiSpec() as any;
     const boardSecurity = [{ BoardSessionAuth: [] }, { BoardApiKeyAuth: [] }];

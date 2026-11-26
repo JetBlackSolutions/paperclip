@@ -166,6 +166,7 @@ import {
   createFinanceEventSchema,
   updateBudgetSchema,
   upsertBudgetPolicySchema,
+  budgetExecutionControlSchema,
   resolveBudgetIncidentSchema,
   repairAccountingSchema,
   retryAccountingSchema,
@@ -1486,6 +1487,7 @@ const BOARD_ONLY_OPERATIONS = new Set([
   "PATCH /api/agents/{id}/permission-grants",
   // Budget changes are board-only (assertBoard in routes/costs.ts).
   "POST /api/companies/{companyId}/budgets/policies",
+  "POST /api/companies/{companyId}/budgets/execution",
   "POST /api/companies/{companyId}/budget-incidents/{incidentId}/resolve",
   "PATCH /api/companies/{companyId}/budgets",
   "PATCH /api/agents/{agentId}/budgets",
@@ -6345,6 +6347,19 @@ registry.registerPath({
 
 registry.registerPath({
   method: "post",
+  path: "/api/companies/{companyId}/budgets/execution",
+  tags: ["costs"],
+  summary: "Pause or resume execution without changing a budget",
+  description: "Requires a company-scoped board administrator; agent controls also require permission to manage agents. "
+    + "Project pause blocks new work but does not request Stop for active runs. "
+    + "Resume releases only a manual pause; budget hard stops and other holds still apply.",
+  request: { params: z.object({ companyId: z.string() }), body: jsonBody(budgetExecutionControlSchema) },
+  responses: { 200: r.ok(z.object({ ok: z.literal(true) })), 400: r.badRequest, 401: r.unauthorized,
+    403: r.forbidden, 404: r.notFound, 409: r.conflict },
+});
+
+registry.registerPath({
+  method: "post",
   path: "/api/companies/{companyId}/budget-incidents/{incidentId}/resolve",
   tags: ["costs"],
   summary: "Resolve a budget incident",
@@ -6366,6 +6381,7 @@ registry.registerPath({
   path: "/api/companies/{companyId}/budgets/overview",
   tags: ["costs"],
   summary: "Get budget overview",
+  description: "Execution controls for the organization and eligible unbudgeted scopes are only included for board administrators with the relevant permissions.",
   request: { params: z.object({ companyId: z.string() }) },
   responses: { 200: r.ok(), 401: r.unauthorized },
 });

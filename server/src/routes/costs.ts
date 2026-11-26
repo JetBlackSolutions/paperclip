@@ -358,7 +358,12 @@ export function costRoutes(
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     if (!(await assertCompanyCostReadAllowed(req, res, companyId))) return;
-    res.json(await budgets.overview(companyId, canManageBudgetExecution(req, companyId)));
+    const execution = canManageBudgetExecution(req, companyId) ? {
+      includeAgents: (await access.decide({
+        actor: req.actor, action: "agents:create", resource: { type: "company", companyId },
+      })).allowed,
+    } : undefined;
+    res.json(await budgets.overview(companyId, execution));
   });
 
   router.post("/companies/:companyId/budgets/execution", validate(budgetExecutionControlSchema), async (req, res) => {

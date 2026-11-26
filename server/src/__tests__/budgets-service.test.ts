@@ -120,7 +120,7 @@ describeEmbeddedPostgres("budgetService release gate enforcement", () => {
     const [fenced] = await db.select().from(agents).where(eq(agents.id, working.id));
     expect(fenced.lifecycleState).toBe("pausing");
     expect(fenced.lifecycleHolds).toContain("company_paused");
-    expect((await service.overview(companyId, true)).organizationExecution).toEqual({ action: "resume" });
+    expect((await service.overview(companyId, { includeAgents: true })).organizationExecution).toEqual({ action: "resume" });
     expect((await service.overview(companyId)).organizationExecution).toBeUndefined();
     await expect(companiesService.update(companyId, { status: "active" }, actor)).rejects.toMatchObject({ status: 409 });
     await expect(companiesService.update(companyId, {}, actor, "resume"))
@@ -130,6 +130,41 @@ describeEmbeddedPostgres("budgetService release gate enforcement", () => {
     await db.update(companies).set({ status: "paused", pauseReason: "budget", pausedAt: new Date() }).where(eq(companies.id, companyId));
     await expect(companiesService.update(companyId, {}, actor, "resume")).rejects.toMatchObject({ status: 409 });
     expect((await companiesService.getById(companyId))?.pauseReason).toBe("budget");
+  });
+
+  it("lists and refreshes eligible execution scopes without requiring a budget policy", async () => {
+    const { companyId, agentId, projectId } = await createBudgetFixture();
+    const other = await createBudgetFixture();
+    const service = budgetService(db);
+    const unbudgeted = () => service.overview(companyId, { includeAgents: true });
+    expect((await service.overview(companyId)).unbudgetedExecution).toBeUndefined();
+    expect((await unbudgeted()).unbudgetedExecution).toEqual([
+      { scopeType: "agent", scopeId: agentId, name: "Budget Agent SECRET_TOKEN_SHOULD_NOT_LEAK", action: "pause" },
+      { scopeType: "project", scopeId: projectId, name: "Budget Project", action: "pause" },
+    ]);
+    expect((await service.overview(companyId, { includeAgents: false })).unbudgetedExecution).toEqual([
+      { scopeType: "project", scopeId: projectId, name: "Budget Project", action: "pause" },
+    ]);
+
+    await createAgentLifecycle(db).setManualExecutionPause(agentId, true);
+    await setProjectExecutionPause(db, companyId, projectId, "pause", "board");
+    expect((await unbudgeted()).unbudgetedExecution?.map(({ action }) => action)).toEqual(["resume", "resume"]);
+    expect((await unbudgeted()).policies).toEqual([]);
+    // No lifecycle worker runs in this service test. Settle the pending Stop.
+    await db.update(agents).set({ status: "paused", lifecycleState: "paused" }).where(eq(agents.id, agentId));
+    await createAgentLifecycle(db).setManualExecutionPause(agentId, false);
+    await setProjectExecutionPause(db, companyId, projectId, "resume", "board");
+    const [scopes, policies] = await Promise.all([unbudgeted(), service.overview(other.companyId, { includeAgents: true })]);
+    expect(scopes.unbudgetedExecution?.map(({ action }) => action)).toEqual(["pause", "pause"]);
+    expect(policies.unbudgetedExecution?.map(({ scopeId }) => scopeId)).toEqual([other.agentId, other.projectId]);
+
+    await service.upsertPolicy(companyId, { scopeType: "agent", scopeId: agentId, amount: 100 }, null);
+    await db.update(projects).set({ archivedAt: new Date() }).where(eq(projects.id, projectId));
+    const capped = await unbudgeted();
+    expect(capped.unbudgetedExecution).toEqual([]);
+    expect(capped.policies[0]).toMatchObject({ scopeId: agentId, executionAction: "pause" });
+    expect((await service.overview(companyId)).policies[0]?.executionAction).toBeUndefined();
+    expect((await service.overview(companyId, { includeAgents: false })).policies[0]?.executionAction).toBeUndefined();
   });
 
   it("gates only the selected project and preserves a hard stop discovered while manual pause is active", async () => {
