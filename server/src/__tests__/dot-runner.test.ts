@@ -369,6 +369,12 @@ describe("durable Dot Runner integration", () => {
 
       await db.update(mcpEventSubscriptions).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(mcpEventSubscriptions.bindingId, f.snapshot.bindingId));
       await expect(f.broker.snapshot(f.company.id, f.agent.id, f.snapshot.bindingId)).rejects.toThrow("event subscription expired");
+      // A pairing made before renewable access cannot subscribe again; it is sent to pair again.
+      const [expiredBinding] = await db.select().from(dotAgentBindings).where(eq(dotAgentBindings.id, f.snapshot.bindingId));
+      const [expiredGrant] = await db.select().from(mcpOauthGrants).where(eq(mcpOauthGrants.id, expiredBinding!.grantId!));
+      await db.update(mcpOauthGrants).set({ scopes: ["paperclip:agent"] }).where(eq(mcpOauthGrants.id, expiredGrant!.id));
+      await expect(f.broker.snapshot(f.company.id, f.agent.id, f.snapshot.bindingId)).rejects.toThrow("Pair the Dot again");
+      await db.update(mcpOauthGrants).set({ scopes: expiredGrant!.scopes }).where(eq(mcpOauthGrants.id, expiredGrant!.id));
       expect(await f.broker.bindingForAgent(f.company.id, f.agent.id)).toMatchObject({ status: "ready", subscriptionVerified: false, subscriptionExpired: true });
       await f.events.subscribe(f.principal, f.subscription);
       await expect(f.broker.snapshot(f.company.id, f.agent.id, f.snapshot.bindingId)).resolves.toMatchObject({ bindingId: f.snapshot.bindingId });

@@ -225,6 +225,14 @@ function createBroker(db: Db) {
           : fail("External provider is disabled for new work.");
       }
       if (state.id === bindingId && state.subscriptionExpired) {
+        // A pairing made before renewable access has no refresh token: its Dot can no
+        // longer sign in to subscribe again, so only a new pairing repairs it.
+        const [legacy] = await db.select({ scopes: mcpOauthGrants.scopes }).from(bindings)
+          .innerJoin(mcpOauthGrants, eq(mcpOauthGrants.id, bindings.grantId)).where(eq(bindings.id, bindingId));
+        if (legacy && !legacy.scopes.includes("offline_access")) {
+          throw failUnavailable("dot_pairing_required",
+            "Dot's event subscription expired, and this pairing was made before renewable access, so the Dot cannot subscribe again. Pair the Dot again.");
+        }
         throw failUnavailable("dot_subscription_expired", "Dot's event subscription expired. Ask the Dot to subscribe to paperclip.dot.mailbox_updated again; it does not need a new pairing.");
       }
       if (state.id !== bindingId || state.status !== "ready" || !state.wakeVerified) {
