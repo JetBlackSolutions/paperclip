@@ -153,3 +153,14 @@ it("removes the copy action and open preview when the pairing code expires", asy
     expect(copyTextToClipboard).toHaveBeenCalledTimes(1);
   } finally { vi.useRealTimers(); }
 });
+
+it("shows lost assignment access without claiming activity, completion, or eligibility for replacement", async () => {
+  api.get.mockResolvedValue({ enabled: true, resourceUrl: "https://paperclip.example/mcp/runner",
+    binding: { ...binding, assignment: { status: "authority_unavailable", attentionRequired: true } } });
+  await render();
+  const alert = container.querySelector("[role=alert]")?.textContent;
+  expect(alert).toContain("Assignment access is unavailable");
+  expect(alert).toContain("has not confirmed an external stop or cleared the assignment for replacement work");
+  expect(container.textContent).not.toContain("accepted by Dot");
+  expect(container.textContent).not.toContain("15 minutes");
+});

@@ -65,6 +65,16 @@ function createBroker(db: Db) {
       if (company?.status !== "active") throw fail("Company authority is unavailable.");
       return { binding, assignment: a };
     }
+    if (!await hasRunExecutionAuthority(queryDb, a)) {
+      throw fail("The run no longer owns this task or its execution authority.");
+    }
+    return { binding, assignment: a };
+  }
+
+  // This is the same run/task authority check used for actual Dot operations.
+  // A negative read can also be a temporary hold or a controller handoff. It
+  // must not settle the assignment, release execution, or enable replacement.
+  async function hasRunExecutionAuthority(queryDb: Db, a: typeof assignments.$inferSelect) {
     const [run] = await queryDb.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.id, a.runId), eq(heartbeatRuns.companyId, a.companyId), eq(heartbeatRuns.agentId, a.agentId)));
     const [company] = await queryDb.select().from(companies).where(eq(companies.id, a.companyId));
     const [agent] = await queryDb.select().from(agents).where(eq(agents.id, a.agentId));
@@ -78,15 +88,12 @@ function createBroker(db: Db) {
     const ownsTask = issue && run && (reviewContext
       ? !!review && (review.interaction.status !== "pending" || issue.executionRunId === run.id)
       : issue.assigneeAgentId === a.agentId && [issue.checkoutRunId, issue.executionRunId].includes(run.id));
-    if (!run || run.status !== "running" || run.runtimeMode !== "native" || run.nativeSessionId !== a.normalizedSessionId
-        || !ownsTask
-        || !coordinator || coordinator.controllerGeneration !== a.controllerGeneration || !coordinator.leaseExpiresAt || coordinator.leaseExpiresAt <= new Date()
-        || ["terminal_failure", "turn_stopping", "turn_stopped"].includes(run.nativePhase ?? "")
-        || !company || company.status !== "active" || !agent || ["paused", "terminated", "pending_approval"].includes(agent.status)
-        || await budgetServiceInTransaction(queryDb).getInvocationBlock(a.companyId, a.agentId, { issueId: run.nativeIssueId })) {
-      throw fail("The run no longer owns this task or its execution authority.");
-    }
-    return { binding, assignment: a };
+    return !!run && run.status === "running" && run.runtimeMode === "native" && run.nativeSessionId === a.normalizedSessionId
+        && !!ownsTask
+        && !!coordinator && coordinator.controllerGeneration === a.controllerGeneration && !!coordinator.leaseExpiresAt && coordinator.leaseExpiresAt > new Date()
+        && !["terminal_failure", "turn_stopping", "turn_stopped"].includes(run.nativePhase ?? "")
+        && company?.status === "active" && !!agent && !["paused", "terminated", "pending_approval"].includes(agent.status)
+        && !await budgetServiceInTransaction(queryDb).getInvocationBlock(a.companyId, a.agentId, { issueId: run.nativeIssueId });
   }
 
   const nativeBroker = createNativeExternalBroker<McpPrincipal>(db, "openai_dot", { enabled: (database, provider) => externalBotEnabled(db, provider ?? "openai_dot", database), authorize: authorizeAssignment });
@@ -150,14 +157,24 @@ function createBroker(db: Db) {
       if (!b) return null;
       const activeSubscriptions = b.grantId ? await db.select({ id: mcpEventSubscriptions.id }).from(mcpEventSubscriptions).where(and(
         eq(mcpEventSubscriptions.grantId, b.grantId), eq(mcpEventSubscriptions.bindingId, b.id), isNull(mcpEventSubscriptions.stoppedAt), gt(mcpEventSubscriptions.expiresAt, new Date()))) : [];
-      const [active] = await db.select({ id: assignments.id, runId: assignments.runId, status: assignments.status, lastActivityAt: assignments.lastActivityAt }).from(assignments)
-        .where(and(eq(assignments.bindingId, b.id), inArray(assignments.status, ["offered", "accepted"])));
+      const [active] = await db.select().from(assignments)
+        .where(and(eq(assignments.bindingId, b.id), eq(assignments.companyId, companyId), eq(assignments.agentId, agentId),
+          eq(assignments.bindingGeneration, b.generation), inArray(assignments.status, ["offered", "accepted"])));
+      const authorityUnavailable = active && b.providerKind === "openai_dot"
+        && (b.status !== "ready" || active.expiresAt <= new Date() || !await hasRunExecutionAuthority(db, active));
       const routine = b.providerKind === "grok_bot" ? await grokRoutineService(db).state(companyId, agentId, b.id) : null;
       return { id: b.id, companyId: b.companyId, agentId: b.agentId, generation: b.generation, status: b.status, providerKind: b.providerKind, dotUrl: b.dotUrl,
         readyAt: b.readyAt, pairingExpiresAt: b.pairingExpiresAt, challengeExpiresAt: b.challengeExpiresAt, connected: !!b.grantId, subscriptionVerified: b.providerKind === "openai_dot" && activeSubscriptions.length > 0,
         wakeVerified: b.providerKind === "grok_bot" ? routine?.verified === true && !await grokRoutineService(db).recoveryNeeded(companyId, agentId) : activeSubscriptions.length > 0 && !!b.readyAt, routine,
         hasPendingChallenge: !!b.challengeHash && !!b.challengeExpiresAt && b.challengeExpiresAt > new Date(),
-        assignment: active ? { ...active, attentionRequired: active.status === "accepted" && active.lastActivityAt.getTime() < Date.now() - 15 * 60_000 } : null };
+        assignment: active ? {
+          id: active.id,
+          runId: active.runId,
+          status: authorityUnavailable ? "authority_unavailable" as const : active.status,
+          lastActivityAt: active.lastActivityAt,
+          attentionRequired: !!authorityUnavailable || (active.status === "accepted"
+            && active.lastActivityAt.getTime() < Date.now() - 15 * 60_000),
+        } : null };
     },
     async reconcileTerminalAssignments(companyId: string, agentId: string, bindingId: string) {
       // A controller can fail before reconnecting to the Runner. Its terminal

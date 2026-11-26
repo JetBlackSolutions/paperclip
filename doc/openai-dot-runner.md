@@ -156,6 +156,11 @@ tools; those narrow inbox reads leave its task cursor unchanged.
 - One active assignment per binding. Acceptance expires after 10 minutes;
   execution authority starts with a two-hour lease. Accepted, still-authorized assignments can renew with `paperclip_dot_renew` for up to two hours ahead, within a 24-hour total bound. Fifteen minutes without useful
   activity is shown in the connection panel as requiring attention.
+- A recorded offer or acceptance can outlast its run's execution authority.
+  The connection panel and `paperclip_dot_capabilities` distinguish this as
+  `authority_unavailable`. The assignment remains visible for reconciliation;
+  the status is not an idle signal, a completion receipt, or proof of an
+  external stop. The status read does not settle work or admit a replacement.
 - No mounted workspace, selectable model, native Dot thread identifier,
   provider usage or provider cost. Text deliverables use Paperclip documents.
   Assigned skills are read from verified pinned bundles; app tools use the assigned MCP gateway. The optional workspace bridge provides files, sandboxed commands, and verified downloadable artifacts without mounting files into OpenAI. Workspace calls serialize within the local controller, including hash checks and writes, so overlapping edits cannot both commit against the same observed hash. Definite file/skill read failures return bounded error receipts rather than leaving tool calls pending. Commands require Linux bubblewrap with a private PID namespace; there is no unrestricted fallback. macOS file tools remain available, but commands are disabled because sandbox-exec cannot contain detached descendants. Networking and injected credentials are excluded from commands; use assigned app tools for services.
