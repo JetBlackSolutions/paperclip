@@ -62,8 +62,12 @@ export function DotRunnerConnection({ companyId, agentId, bindingId, onBinding }
     {state.data && !state.data.enabled && <p className="text-sm text-muted-foreground">Enable OpenAI Dot and Assistant connections (MCP) in experimental settings.</p>}
     {state.data?.resourceUrl && <p className="text-sm break-all">Private plugin MCP URL: <code>{state.data.resourceUrl}</code></p>}
     {b && <p className="text-sm">Connection: {b.status}. Event subscription: {b.subscriptionVerified ? "verified" : "required"}.</p>}
-    {b?.assignment && <p className="text-sm">Assignment: {b.assignment.status === "offered" ? "waiting for Dot to accept" : "accepted by Dot"}.</p>}
-    {b?.assignment?.attentionRequired && <p className="text-sm text-destructive" role="alert">Dot has not reported useful activity for 15 minutes. Inspect the Dot before assigning replacement work; Paperclip cannot confirm its external stop.</p>}
+    {b?.assignment && (b.assignment.status === "authority_unavailable"
+      ? <p className="text-sm text-destructive" role="alert">Assignment access is unavailable. Paperclip has not confirmed an external stop or cleared the assignment for replacement work.</p>
+      : <>
+        <p className="text-sm">Assignment: {b.assignment.status === "offered" ? "waiting for Dot to accept" : "accepted by Dot"}.</p>
+        {b.assignment.attentionRequired && <p className="text-sm text-destructive" role="alert">Dot has not reported useful activity for 15 minutes. Inspect the Dot before assigning replacement work; Paperclip cannot confirm its external stop.</p>}
+      </>)}
     {pairing && setupPrompt && b?.status === "pairing" && <div className="space-y-2">
       <AgentSetupPrompt
         prompt={setupPrompt}

@@ -4,11 +4,11 @@ import express from "express";
 import request from "supertest";
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDb, authUsers, companies, companyMemberships, agents, dotAgentBindings, dotMailboxItems, mcpEventSubscriptions, mcpOauthGrants, mcpOauthRequests, mcpOauthTokens } from "@paperclipai/db";
+import { createDb, authUsers, companies, companyMemberships, agents, dotAgentBindings, dotMailboxItems, dotRunnerAssignments, heartbeatRuns, issues, nativeRunFinalizations, mcpEventSubscriptions, mcpOauthGrants, mcpOauthRequests, mcpOauthTokens } from "@paperclipai/db";
 import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { createPublicMcpOAuth, publicMcpConfig, hashMcpSecret, DEVICE_GRANT } from "../services/public-mcp/oauth.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
-import { dotRunnerBroker } from "../services/dot-runner-broker.js";
+import { createDotRunnerMcpTools, dotRunnerBroker } from "../services/dot-runner-broker.js";
 import { publicMcpManagementRoutes, publicMcpIngressRoutes } from "../routes/public-mcp.js";
 
 const config = { origin: "https://paperclip.example", resource: "https://paperclip.example/mcp/runner" };
@@ -86,6 +86,56 @@ describe("Dot onboarding with an operator-issued pairing capability", () => {
     expect((await broker.mailbox(principal)).items).toEqual([]);
     await expect(broker.confirmChallenge(principal, "already-used")).rejects.toThrow("authority");
   });
+  it("marks a recorded Dot assignment unavailable when live execution authority is missing", async () => {
+    const f = await fixture();
+    const tokens = await connect(f);
+    const principal = await f.oauth.authenticate(tokens.access_token);
+    const broker = dotRunnerBroker(db);
+    await db.insert(mcpEventSubscriptions).values({ id: randomUUID(), companyId: f.company.id,
+      grantId: principal.grant.id, name: "paperclip.dot.mailbox_updated", bindingId: f.pairing.bindingId,
+      arguments: {}, deliveryMaterial: {}, verifiedAt: new Date(), expiresAt: new Date(Date.now() + 60_000) });
+    await broker.challenge(f.company.id, f.agent.id);
+    const challenge = (await broker.mailbox(principal)).items.find(item => item.kind === "readiness_challenge")!;
+    await broker.confirmChallenge(principal, String(challenge.references.challenge));
+    const [issue] = await db.insert(issues).values({ companyId: f.company.id, title: "Dot investigation", assigneeAgentId: f.agent.id }).returning();
+    const nativeSessionId = randomUUID();
+    const [run] = await db.insert(heartbeatRuns).values({ companyId: f.company.id, agentId: f.agent.id, runtimeMode: "native",
+      driverKind: "openai_dot_mcp", status: "running", nativeIssueId: issue!.id, nativeSessionId }).returning();
+    await db.update(issues).set({ executionRunId: run!.id }).where(eq(issues.id, issue!.id));
+    await db.insert(nativeRunFinalizations).values({ runId: run!.id, issueId: issue!.id, companyId: f.company.id,
+      phase: "running", controllerGeneration: 1, leaseExpiresAt: new Date(Date.now() + 60_000) });
+    const [assignment] = await db.insert(dotRunnerAssignments).values({ companyId: f.company.id, agentId: f.agent.id, runId: run!.id,
+      bindingId: f.pairing.bindingId, bindingGeneration: 1, normalizedSessionId: nativeSessionId, turnId: randomUUID(),
+      controllerGeneration: 1, catalogDigest: "fixture", status: "accepted", projection: {},
+      acceptBy: new Date(Date.now() + 30_000), expiresAt: new Date(Date.now() + 60_000) }).returning();
+    const tools = createDotRunnerMcpTools(db);
+    const read = () => tools.callTool(principal, "paperclip_dot_read", { assignmentId: assignment!.id });
+    const capabilities = () => tools.callTool(principal, "paperclip_dot_capabilities", {});
+    await expect(read()).resolves.toMatchObject({ result: { status: "accepted" } });
+    await expect(capabilities()).resolves.toMatchObject({ result: { assignment: { id: assignment!.id, status: "accepted", attentionRequired: false } } });
+
+    // A newer execution claim can be saved before the old assignment settles.
+    const [nextRun] = await db.insert(heartbeatRuns).values({ companyId: f.company.id, agentId: f.agent.id, runtimeMode: "native",
+      driverKind: "openai_dot_mcp", status: "queued", nativeIssueId: issue!.id, nativeSessionId: randomUUID() }).returning();
+    await db.update(issues).set({ executionRunId: nextRun!.id }).where(eq(issues.id, issue!.id));
+    await expect(read()).rejects.toThrow("The run no longer owns this task or its execution authority.");
+    await expect(tools.callTool(principal, "paperclip_dot_finish", { assignmentId: assignment!.id, requestId: randomUUID(), result: {} }))
+      .rejects.toThrow("execution authority");
+    await expect(capabilities()).resolves.toMatchObject({ result: {
+      assignment: { id: assignment!.id, runId: run!.id, status: "authority_unavailable", attentionRequired: true },
+    } });
+    await expect(broker.bindingForAgent(f.company.id, f.agent.id))
+      .resolves.toMatchObject({ assignment: { status: "authority_unavailable" } });
+    await expect(broker.snapshot(f.company.id, f.agent.id, f.pairing.bindingId)).rejects.toThrow("already has an active assignment");
+    expect((await db.select().from(dotRunnerAssignments).where(eq(dotRunnerAssignments.id, assignment!.id)))[0]?.status).toBe("accepted");
+    expect((await db.select().from(issues).where(eq(issues.id, issue!.id)))[0]?.executionRunId).toBe(nextRun!.id);
+
+    // A temporary authority gap must not fence a run that can regain its claim.
+    await db.update(issues).set({ executionRunId: run!.id }).where(eq(issues.id, issue!.id));
+    await expect(read()).resolves.toMatchObject({ result: { status: "accepted" } });
+    await expect(capabilities()).resolves.toMatchObject({ result: { assignment: { id: assignment!.id, status: "accepted", attentionRequired: false } } });
+  });
+
   it("refreshes a Dot connection after years of inactivity, still rotates and revokes on replay", async () => {
     const f = await fixture();
     const tokens = await connect(f);
