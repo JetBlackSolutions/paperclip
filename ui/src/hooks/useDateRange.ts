@@ -13,24 +13,24 @@ export const PRESET_LABELS: Record<DatePreset, string> = {
 
 export const PRESET_KEYS: DatePreset[] = ["mtd", "7d", "30d", "ytd", "all", "custom"];
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 // note: computeRange is called inside a useMemo that re-evaluates once per minute
 // (driven by minuteTick). this means sliding windows (7d, 30d) advance their upper
 // bound at most once per minute — acceptable for a cost dashboard.
-export function computeRange(preset: DatePreset): { from: string; to: string } {
-  const now = new Date();
+export function computeRange(preset: DatePreset, now = new Date()): { from: string; to: string } {
   const to = now.toISOString();
   switch (preset) {
     case "mtd": {
       const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
       return { from: d.toISOString(), to };
     }
-    case "7d": {
-      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7, 0, 0, 0, 0);
-      return { from: d.toISOString(), to };
-    }
+    case "7d":
     case "30d": {
-      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30, 0, 0, 0, 0);
-      return { from: d.toISOString(), to };
+      // Rolling periods are elapsed time, not local calendar midnights.
+      // Midnight adds a partial day and changes the span at DST boundaries.
+      const days = preset === "7d" ? 7 : 30;
+      return { from: new Date(now.getTime() - days * MS_PER_DAY).toISOString(), to };
     }
     case "ytd": {
       const d = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));

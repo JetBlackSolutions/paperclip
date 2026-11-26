@@ -672,6 +672,10 @@ export function Costs({
             </div>
           </div>
 
+          <p className="text-sm text-muted-foreground">
+            The date range filters recorded usage and charges. Budget limits and active incidents use their own windows; subscription fees show the current monthly rates.
+          </p>
+
           {preset === "custom" ? (
             <div data-canonical-toolbar="cost-dates" className="flex flex-wrap items-center gap-2 border border-border p-3">
               <input
