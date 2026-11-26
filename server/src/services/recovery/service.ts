@@ -170,8 +170,10 @@ import {
   type SuccessfulRunHandoffNotice,
 } from "./successful-run-handoff.js";
 import {
+  DOT_CONFIGURATION_INCOMPLETE_REASONS,
   SANDBOX_PROVIDER_PLUGIN_NOT_READY_REASON,
   sandboxProviderPluginRemedy,
+  buildConfigurationIncompleteRecoveryNoticeSeed,
   buildExecutionReviewParticipantRecoveryNoticeSeed,
   buildExecutionReviewParticipantUnavailableNoticeSeed,
   buildStrandedRecoveryEscalationNotice,
@@ -580,6 +582,7 @@ const TRANSIENT_INFRA_CONTINUATION_ERROR_CODES = new Set<string>([
 const NON_RETRYABLE_CONTINUATION_ERROR_CODES = new Set<string>([
   INTERACTION_DELIVERY_DENIED,
   "project_access_denied",
+  "configuration_incomplete",
   "native_provider_model_rejected",
   "provider_tool_definition_invalid",
   "adapter_engine_unavailable",
@@ -636,7 +639,7 @@ export const PROVIDER_QUOTA_RECOVERY_DEFAULT_BACKOFF_MS = PROVIDER_LIMIT_DEFAULT
 const PROVIDER_QUOTA_ERROR_RE =
   /(?:you(?:'|’)ve hit your (?:\w+ )?limit|usage limit(?: reached| exceeded)?|provider quota|quota (?:limit )?exceeded|model (?:is )?at capacity)/i;
 const CONFIGURATION_INCOMPLETE_ERROR_RE =
-  /(?:model_not_found|model [^\n]{0,120} not found|missing (?:api )?(?:key|credentials?)|credentials? (?:are |is )?missing|no (?:api )?(?:key|credentials?) (?:was |were )?(?:found|configured|provided)|api key (?:is )?(?:not set|unavailable))/i;
+  /(?:model_not_found|model [^\n]{0,120} not found|missing (?:api )?(?:key|credentials?)|credentials? (?:are |is )?missing|no (?:api )?(?:key|credentials?) (?:was |were )?(?:found|configured|provided)|api key (?:is )?(?:not set|unavailable)|dot must be paired with a verified event subscription|dot(?:'|’)s event subscription expired)/i;
 
 export type AdapterFailureRecoveryClassification =
   | { kind: "provider_quota"; retryAt: Date; parsedResetTime: boolean }
@@ -2715,6 +2718,14 @@ export function recoveryService(
                               ?.pluginStatus,
                           ) ?? "error",
                         )}, then press Retry.`
+                      : DOT_CONFIGURATION_INCOMPLETE_REASONS.has(
+                          readNonEmptyString(
+                            readConfigurationIncompletePayload(input.latestRun)?.reason,
+                          ) ?? "",
+                        )
+                      ? buildConfigurationIncompleteRecoveryNoticeSeed(
+                          readConfigurationIncompletePayload(input.latestRun),
+                        ).nextAction!
                       : "A secret this agent needs is not set. Add it in the agent's settings, then press Retry."
                     : recoveryCause === "execution_review_participant_recovery"
                       ? "The reviewer did not finish the review. Choose a reviewer, or press Retry to ask the same reviewer again."
