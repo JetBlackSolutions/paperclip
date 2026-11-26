@@ -686,15 +686,17 @@ export function aiConnectionService(db: Db) {
     // Two accounts with one name cannot be told apart in a picker, and the setup
     // flows name accounts for the person. A new account that would repeat the name
     // of one still in use is numbered instead.
-    const name = reconnect
-      ? input.name
-      : distinctAiConnectionName(input.name, (await rows(companyId))
-          .filter((r) => r.grant.status !== "revoked")
-          .map((r) => r.connection.name));
+    let name = input.name;
     const id = reconnect?.connection.id ?? randomUUID();
     const grantId = reconnect?.grant.id ?? randomUUID();
     const persist = () => withAccountHomeSecretMutationLock(undefined, companyId, () => db.transaction(async (tx) => {
       await managementContext?.reauthorize();
+      // Chosen under the company lock, so two saves that overlap cannot both take the same name.
+      if (!reconnect) {
+        name = distinctAiConnectionName(input.name, (await rows(companyId))
+          .filter((r) => r.grant.status !== "revoked")
+          .map((r) => r.connection.name));
+      }
       const secrets = secretService(tx);
       if (loginSession) {
         const [session] = await tx

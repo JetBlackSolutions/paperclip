@@ -2646,6 +2646,11 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         if (cancellationReason) await cancelActiveForAgentInternal(agentId, cancellationReason);
         await cancelRejectedQueuedRuns(rejectedClaims);
         for (const { run, reason } of externalBotWaitsOver) {
+          // The bot may have been repaired, or the run started, since the check under the lock.
+          const [current] = await db.select({ status: heartbeatRuns.status, startedAt: heartbeatRuns.startedAt })
+            .from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+          const agent = await getAgent(run.agentId);
+          if (current?.status !== "queued" || current.startedAt || !agent || await canStartNewExternalBotWork(agent)) continue;
           await cancelRunInternal(
             run.id,
             `Not started: the external agent was not ready to take new work for ${Math.round(EXTERNAL_BOT_START_WAIT_MS / 60_000)} minutes.`

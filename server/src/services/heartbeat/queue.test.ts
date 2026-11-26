@@ -1205,6 +1205,19 @@ describe.skipIf(!support.supported)("heartbeat queue database wiring", () => {
     expect(deps.executeRun).not.toHaveBeenCalled();
   });
 
+  it("does not end waited-out work when the external bot is repaired before the run is ended", async () => {
+    const { run, agent } = await fixture("queued");
+    await db.update(heartbeatRuns).set({ responsibleUserId: "queue-test-user",
+      createdAt: new Date(Date.now() - EXTERNAL_BOT_START_WAIT_MS - 1_000) }).where(eq(heartbeatRuns.id, run.id));
+    const deps = { ...callbacks(db), canStartNewExternalBotWork: vi.fn(async () => false), externalBotNewWorkBlockReason: vi.fn(async () => "not ready") };
+    deps.canStartNewExternalBotWork.mockResolvedValueOnce(false).mockResolvedValue(true);
+    deps.getAgent.mockResolvedValue({ ...agent, adapterType: "paperclip_runner", adapterConfig: { provider: "grok_bot" } });
+    const queue = createHeartbeatQueue(db, deps);
+    expect(await queue.startNextQueuedRunForAgent(agent.id)).toEqual([]);
+    expect(deps.cancelRunInternal).not.toHaveBeenCalled();
+    expect((await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id)))[0].status).toBe("queued");
+  });
+
   it("keeps new work waiting for an unready external bot inside the wait", async () => {
     const { run, agent } = await fixture("queued");
     await db.update(heartbeatRuns).set({ responsibleUserId: "queue-test-user" }).where(eq(heartbeatRuns.id, run.id));
