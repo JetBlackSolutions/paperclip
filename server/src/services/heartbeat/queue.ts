@@ -2358,6 +2358,8 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
   }
 
   const declinedAgedClaimAt = new Map<string, number>();
+  /** When this server first saw an external bot unready for a queued run. */
+  const externalBotBlockedSince = new Map<string, number>();
 
   function noteDeclinedAgedClaim(run: typeof heartbeatRuns.$inferSelect, reason: string) {
     const now = Date.now();
@@ -2543,11 +2545,16 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         )
         .orderBy(asc(heartbeatRuns.createdAt));
       if (queuedRuns.length === 0) return [];
-      if (queuedRuns.every(run => !run.startedAt) && !await canStartNewExternalBotWork(agent)) {
+      const externalBotReady = !queuedRuns.every(run => !run.startedAt) || await canStartNewExternalBotWork(agent);
+      if (externalBotReady) for (const run of queuedRuns) externalBotBlockedSince.delete(run.id);
+      if (!externalBotReady) {
         // New work waits for the external bot's connection to be repaired, but not without
         // end: a run that nobody can start must not look like work in progress for hours.
+        // Counted from when this server first saw the bot unready for the run, not from the
+        // run's age: a run may have queued for other reasons first.
         const now = Date.now();
-        const waitedOut = queuedRuns.filter(run => now - run.createdAt.getTime() >= EXTERNAL_BOT_START_WAIT_MS);
+        for (const run of queuedRuns) if (!externalBotBlockedSince.has(run.id)) externalBotBlockedSince.set(run.id, now);
+        const waitedOut = queuedRuns.filter(run => now - externalBotBlockedSince.get(run.id)! >= EXTERNAL_BOT_START_WAIT_MS);
         if (waitedOut.length > 0) {
           const reason = await externalBotNewWorkBlockReason?.(agent).catch(() => null);
           externalBotWaitsOver.push(...waitedOut.map(run => ({ run, reason: reason ?? null })));
@@ -2650,6 +2657,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
           const [current] = await db.select({ status: heartbeatRuns.status, startedAt: heartbeatRuns.startedAt })
             .from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
           const agent = await getAgent(run.agentId);
+          externalBotBlockedSince.delete(run.id);
           if (current?.status !== "queued" || current.startedAt || !agent || await canStartNewExternalBotWork(agent)) continue;
           await cancelRunInternal(
             run.id,
