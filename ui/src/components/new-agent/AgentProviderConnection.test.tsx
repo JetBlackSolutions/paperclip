@@ -310,8 +310,9 @@ describe("AgentProviderConnection reuse", () => {
     const onComplete = vi.fn();
     const intent = { provider: adapterType === "claude_local" ? "anthropic" as const : "openai" as const, method: "subscription" as const, name: "Hosted account", ownership: "personal" as const, agentIds: [], allAgents: false };
     await mount(adapterType, false, false, false, false, false, { intent, onComplete }, true, "authenticated", false);
-    openProvider();
-    expect(host.textContent).toContain("This environment does not support browser sign-in");
+    // The account starts on the API key, the option that works on this server.
+    expect(host.textContent).toContain("subscription sign-in is not available on this server");
+    expect(host.querySelector('input[type="password"]')).toBeTruthy();
     expect(host.textContent).not.toContain("Run this in a terminal");
     expect(managedApi.startLocalLogin).not.toHaveBeenCalled();
     click("Connect");
@@ -374,8 +375,7 @@ describe("AgentProviderConnection reuse", () => {
     const onComplete = vi.fn();
     const intent = { provider: adapterType === "claude_local" ? "anthropic" as const : "openai" as const, method: "subscription" as const, name: "Engineering subscription", ownership: "shared" as const, agentIds: ["nova"], allAgents: false };
     const { test } = await mount(adapterType, false, false, false, true, false, { intent, onComplete });
-    openProvider();
-    expect(host.textContent).toContain("This environment does not support browser sign-in");
+    expect(host.textContent).toContain("subscription sign-in is not available on this server");
     expect(host.textContent).not.toContain("login on this machine");
     click("Connect");
     expect(onComplete).not.toHaveBeenCalled();
@@ -425,6 +425,37 @@ describe("AgentProviderConnection reuse", () => {
     openProvider();
     expect(host.textContent).toContain("New subscription login");
     expect(host.textContent).not.toContain("Use saved subscription");
+  });
+
+  it("starts a new account on the API key when this server cannot run a subscription sign-in", async () => {
+    const onComplete = vi.fn();
+    await mount("codex_local", false, false, false, false, false, {
+      intent: { provider: "openai", method: "subscription", name: "My OpenAI subscription", ownership: "personal", agentIds: [], allAgents: true },
+      initialMethod: "subscription", fixedMethod: false, onComplete,
+    }, true, "authenticated", false);
+    await vi.waitFor(() => expect(host.querySelector('input[type="password"]')).toBeTruthy());
+    expect(host.textContent).toContain("OpenAI subscription sign-in is not available on this server, so this account connects with an API key.");
+    flushSync(() => {
+      const input = host.querySelector('input[type="password"]')!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "test-api-key");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const connect = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Connect"))!;
+    expect(connect.disabled).toBe(false);
+    click("Connect");
+    await vi.waitFor(() => expect(onComplete).toHaveBeenCalled());
+    expect((managedApi.create.mock.calls.at(-1)! as unknown as [string, { method: string }])[1].method).toBe("api_key");
+  });
+
+  it("says why the subscription option is unavailable when the person switches back to it", async () => {
+    await mount("codex_local", false, false, false, false, false, {
+      intent: { provider: "openai", method: "subscription", name: "My OpenAI subscription", ownership: "personal", agentIds: [], allAgents: true },
+      initialMethod: "subscription", fixedMethod: false, onComplete: vi.fn(),
+    }, true, "authenticated", false);
+    await vi.waitFor(() => expect(host.querySelector('input[type="password"]')).toBeTruthy());
+    click("Use subscription instead");
+    expect(host.textContent).toContain("OpenAI subscription sign-in is not available on this server. Choose “Use API key instead”");
+    expect(host.querySelector('input[type="password"]')).toBeNull();
   });
 
   it("defaults to subscription when no saved credentials exist", async () => {

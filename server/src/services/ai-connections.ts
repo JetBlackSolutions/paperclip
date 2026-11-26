@@ -64,6 +64,17 @@ function canUseCredential(
   );
 }
 
+/** The requested name, or the first numbered form of it that no listed account already has. */
+export function distinctAiConnectionName(requested: string, taken: readonly string[]): string {
+  const key = (name: string) => name.trim().toLowerCase();
+  const used = new Set(taken.map(key));
+  if (!used.has(key(requested))) return requested;
+  for (let number = 2; ; number++) {
+    const candidate = `${requested.trim()} ${number}`;
+    if (!used.has(key(candidate))) return candidate;
+  }
+}
+
 export function aiConnectionService(db: Db) {
   const secrets = secretService(db);
   async function membership(companyId: string, userId: string | null) {
@@ -672,10 +683,20 @@ export function aiConnectionService(db: Db) {
       throw unprocessable(
         "Reconnect cannot change the sign-in method or ownership",
       );
+    // Two accounts with one name cannot be told apart in a picker, and the setup
+    // flows name accounts for the person. A new account that would repeat the name
+    // of one still in use is numbered instead.
+    let name = input.name;
     const id = reconnect?.connection.id ?? randomUUID();
     const grantId = reconnect?.grant.id ?? randomUUID();
     const persist = () => withAccountHomeSecretMutationLock(undefined, companyId, () => db.transaction(async (tx) => {
       await managementContext?.reauthorize();
+      // Chosen under the company lock, so two saves that overlap cannot both take the same name.
+      if (!reconnect) {
+        name = distinctAiConnectionName(input.name, (await rows(companyId))
+          .filter((r) => r.grant.status !== "revoked")
+          .map((r) => r.connection.name));
+      }
       const secrets = secretService(tx);
       if (loginSession) {
         const [session] = await tx
@@ -758,7 +779,7 @@ export function aiConnectionService(db: Db) {
           companyId,
           {
             key: `ai_${grantId.replaceAll("-", "_")}`,
-            name: input.name,
+            name,
             provider: "local_encrypted",
           },
           { userId },
@@ -854,7 +875,7 @@ export function aiConnectionService(db: Db) {
             id,
             companyId,
             applicationId: app.id,
-            name: input.name,
+            name,
             uid: `ai-${id}`,
             connectionPurpose: "ai",
             transport: "runtime_auth",

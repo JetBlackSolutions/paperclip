@@ -126,6 +126,18 @@ describe("managed AI connections", () => {
     } finally { native.mockRestore(); legacy.mockRestore(); request.mockRestore(); await runtime.cleanup(); }
   });
 
+  it("numbers a new account that would repeat the name of one still in use", async () => {
+    const owner = "name-twin";
+    await db.insert(companyMemberships).values({ companyId, principalId: owner, principalType: "user", status: "active", membershipRole: "member" });
+    const first = await create(owner, "Company OpenRouter");
+    const second = await create(owner, "Company OpenRouter");
+    const third = await create(owner, "company openrouter");
+    const names = new Map((await service.list(companyId, owner)).map((account) => [account.id, account.name]));
+    expect(names.get(first.connectionId)).toBe("Company OpenRouter");
+    expect(names.get(second.connectionId)).toBe("Company OpenRouter 2");
+    expect(names.get(third.connectionId)).toBe("company openrouter 3");
+  });
+
   it("defers a new plugin agent's Copilot check until its saved-agent lifecycle can acquire the computer", async () => {
     const { errorHandler } = await import("../middleware/index.js");
     const owner = "copilot-plugin-bootstrap", pluginId = randomUUID();

@@ -248,6 +248,8 @@ export interface HeartbeatQueueDependencies extends Pick<HeartbeatRetryDependenc
   /** Before a dispatch pass, refresh admission inputs that have gone stale; null when current. */
   refreshRunAdmission?: () => Promise<void> | null;
   canStartNewExternalBotWork: (agent: typeof agents.$inferSelect) => Promise<boolean>;
+  /** Why an external bot cannot take new work now, in words for the person; null when it can or the reason is unknown. */
+  externalBotNewWorkBlockReason?: (agent: typeof agents.$inferSelect) => Promise<string | null>;
   executeRun: (runId: string) => Promise<void>;
   releaseIssueExecutionAndPromote: (run: Pick<HeartbeatRun, "id" | "companyId">, options?: { suppressImmediateRecovery?: boolean; resumeStrandedQueue?: boolean; deferredPostCommitEffects?: WakeQueuePostCommitEffect[] }) => Promise<unknown>;
   applyWakeQueuePostCommitEffects: (effects: WakeQueuePostCommitEffect[]) => Promise<void>;
@@ -439,6 +441,9 @@ export async function notifyOtherAgentsQueuedOnSettledIssue(db: Db, run: Pick<ty
   return true;
 }
 
+/** How long new work waits for an external bot (Grok Bot) that is not ready before the run is ended with the reason. */
+export const EXTERNAL_BOT_START_WAIT_MS = 30 * 60_000;
+
 export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDependencies) {
   const {
     setRunStatusFromLive,
@@ -474,6 +479,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
     listCompanyAgentOrgRows,
     executeRun,
     canStartNewExternalBotWork,
+    externalBotNewWorkBlockReason,
     activeRunExecutionPromises,
     activeWakeupPromises,
     instanceSettings,
@@ -2352,6 +2358,8 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
   }
 
   const declinedAgedClaimAt = new Map<string, number>();
+  /** When this server first saw an external bot unready for a queued run. */
+  const externalBotBlockedSince = new Map<string, number>();
 
   function noteDeclinedAgedClaim(run: typeof heartbeatRuns.$inferSelect, reason: string) {
     const now = Date.now();
@@ -2503,6 +2511,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
     const rejectedClaims: Array<{ run: typeof heartbeatRuns.$inferSelect; err: HttpError }> = [];
     const deferredPostCommitEffects: WakeQueuePostCommitEffect[] = [];
     const deferredCancellations: Array<() => Promise<void>> = [];
+    const externalBotWaitsOver: Array<{ run: typeof heartbeatRuns.$inferSelect; reason: string | null }> = [];
     let cancellationReason: string | undefined;
 
     return withAgentStartLock(agentId, async () => {
@@ -2536,7 +2545,22 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         )
         .orderBy(asc(heartbeatRuns.createdAt));
       if (queuedRuns.length === 0) return [];
-      if (queuedRuns.every(run => !run.startedAt) && !await canStartNewExternalBotWork(agent)) return [];
+      const externalBotReady = !queuedRuns.every(run => !run.startedAt) || await canStartNewExternalBotWork(agent);
+      if (externalBotReady) for (const run of queuedRuns) externalBotBlockedSince.delete(run.id);
+      if (!externalBotReady) {
+        // New work waits for the external bot's connection to be repaired, but not without
+        // end: a run that nobody can start must not look like work in progress for hours.
+        // Counted from when this server first saw the bot unready for the run, not from the
+        // run's age: a run may have queued for other reasons first.
+        const now = Date.now();
+        for (const run of queuedRuns) if (!externalBotBlockedSince.has(run.id)) externalBotBlockedSince.set(run.id, now);
+        const waitedOut = queuedRuns.filter(run => now - externalBotBlockedSince.get(run.id)! >= EXTERNAL_BOT_START_WAIT_MS);
+        if (waitedOut.length > 0) {
+          const reason = await externalBotNewWorkBlockReason?.(agent).catch(() => null);
+          externalBotWaitsOver.push(...waitedOut.map(run => ({ run, reason: reason ?? null })));
+        }
+        return [];
+      }
 
       const dependencyReadiness = await listQueuedRunDependencyReadiness(
         agent.companyId,
@@ -2628,6 +2652,21 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
       } finally {
         if (cancellationReason) await cancelActiveForAgentInternal(agentId, cancellationReason);
         await cancelRejectedQueuedRuns(rejectedClaims);
+        for (const { run, reason } of externalBotWaitsOver) {
+          // The bot may have been repaired, or the run started, since the check under the lock.
+          const [current] = await db.select({ status: heartbeatRuns.status, startedAt: heartbeatRuns.startedAt })
+            .from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+          const agent = await getAgent(run.agentId);
+          externalBotBlockedSince.delete(run.id);
+          if (current?.status !== "queued" || current.startedAt || !agent || await canStartNewExternalBotWork(agent)) continue;
+          await cancelRunInternal(
+            run.id,
+            `Not started: the external agent was not ready to take new work for ${Math.round(EXTERNAL_BOT_START_WAIT_MS / 60_000)} minutes.`
+              + (reason ? ` ${reason}` : "") + " Repair its connection on Harness / Runtime, then send the request again.",
+            { errorCode: "external_agent_not_ready" },
+          ).catch((err) => logger.error({ err, runId: run.id },
+            "failed to end a queued run whose external agent stayed unready; the next pass retries it"));
+        }
         for (const cancel of deferredCancellations) {
           await cancel().catch((err) => logger.warn({ err, agentId },
             "queued heartbeat run refused by a pause hold could not be cancelled; the next claim retries it"));

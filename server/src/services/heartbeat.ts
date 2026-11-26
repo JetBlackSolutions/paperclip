@@ -1328,6 +1328,8 @@ export function heartbeatService(
       return dotRunnerBroker(db).canStartNewWork(agent.companyId, agent.id,
         readNonEmptyString(agent.adapterConfig.externalBindingId) ?? "");
     },
+    externalBotNewWorkBlockReason: agent => dotRunnerBroker(db).newWorkBlockReason(agent.companyId, agent.id,
+      readNonEmptyString(agent.adapterConfig.externalBindingId) ?? ""),
     applyWakeQueuePostCommitEffects,
     setRunStatusFromLive,
     setWakeupStatus,
