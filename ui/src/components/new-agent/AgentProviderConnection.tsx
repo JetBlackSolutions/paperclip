@@ -145,6 +145,15 @@ export function AgentProviderConnection({
       ? "subscription" : savedKeys.options.length ? "api" : "subscription"
   );
   const authMethod = method === "api" ? "api_key" : "subscription";
+  // On a server that cannot run a provider sign-in, the subscription option has no way forward.
+  const subscriptionUnavailable = Boolean(managedAccount) && !canLogin && !canUseLocalLogin
+    && !(localEnvironment && health.isPending);
+  const methodChosenByPerson = useRef(false);
+  const canSwitchMethod = Boolean(managedAccount) && !managedAccount?.fixedMethod;
+  useEffect(() => {
+    // Start on the API key, the option that works here, unless the person picked the method themselves.
+    if (subscriptionUnavailable && canSwitchMethod && !methodChosenByPerson.current) setMethod("api");
+  }, [subscriptionUnavailable, canSwitchMethod]);
   // Reconnect preserves an account's method. Choosing another method creates
   // an account for the same provider; the task host selects it after sign-in.
   const reconnecting = managedAccount?.intent.connectionId && (
@@ -254,6 +263,7 @@ export function AgentProviderConnection({
     (Boolean(managedAccount) || auth.data?.status !== "present" || subscriptionId === "");
   const switchMode = (next: ModelConnectionMode) => {
     if (advancedConnection && next === (advanced ? "advanced" : method)) return;
+    methodChosenByPerson.current = true;
     onDraftChanged?.();
     cancel();
     setAdvanced(next === "advanced");
@@ -332,6 +342,11 @@ export function AgentProviderConnection({
       >
         {opened && (
           <div className="pt-5">
+            {method === "api" && subscriptionUnavailable && canSwitchMethod && (
+              <p className="pb-3 text-sm text-muted-foreground">
+                {provider} subscription sign-in is not available on this server, so this account connects with an API key.
+              </p>
+            )}
             {method === "api" ? (
               <OnboardingLoginCard
                 instruction={
@@ -423,7 +438,11 @@ export function AgentProviderConnection({
                   ? "Use your saved Claude subscription for this agent."
                   : canLogin
                     ? "Use the existing provider connection for this environment."
-                    : "This environment does not support browser sign-in. Choose a sign-in environment or connect with an API key."}
+                    : managedAccount
+                      ? canSwitchMethod
+                        ? `${provider} subscription sign-in is not available on this server. Choose “Use API key instead”, or ask your Paperclip administrator to turn it on.`
+                        : `${provider} subscription sign-in is not available on this server. Ask your Paperclip administrator to turn it on, or add a new account with an API key.`
+                      : "This environment does not support browser sign-in. Choose a sign-in environment or connect with an API key."}
               </p>
             )}
           </div>
