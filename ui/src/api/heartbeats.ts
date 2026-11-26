@@ -55,6 +55,8 @@ export interface ActiveRunForIssue {
 }
 
 export interface LiveRunForIssue {
+  /** Paperclip cannot accept operations from this Dot run; external stop is not confirmed. */
+  dotAuthorityUnavailable?: boolean;
   execution?: HeartbeatRun["execution"];
   id: string;
   runtimeMode?: "legacy" | "native";

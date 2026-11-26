@@ -161,6 +161,9 @@ tools; those narrow inbox reads leave its task cursor unchanged.
   `authority_unavailable`. The assignment remains visible for reconciliation;
   the status is not an idle signal, a completion receipt, or proof of an
   external stop. The status read does not settle work or admit a replacement.
+  Task chat shows **Paperclip access unavailable** for the exact running Dot
+  turn when it loses access, instead of a live thinking clock. The transcript
+  remains available, and this notice does not confirm a finish or a stop.
 - No mounted workspace, selectable model, native Dot thread identifier,
   provider usage or provider cost. Text deliverables use Paperclip documents.
   Assigned skills are read from verified pinned bundles; app tools use the assigned MCP gateway. The optional workspace bridge provides files, sandboxed commands, and verified downloadable artifacts without mounting files into OpenAI. Workspace calls serialize within the local controller, including hash checks and writes, so overlapping edits cannot both commit against the same observed hash. Definite file/skill read failures return bounded error receipts rather than leaving tool calls pending. Commands require Linux bubblewrap with a private PID namespace; there is no unrestricted fallback. macOS file tools remain available, but commands are disabled because sandbox-exec cannot contain detached descendants. Networking and injected credentials are excluded from commands; use assigned app tools for services.
