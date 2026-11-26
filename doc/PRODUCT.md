@@ -545,3 +545,5 @@ agents on other work.
 Resume releases a manual pause only. A budget hard stop or another independent
 hold remains enforceable. Changes are scoped to the organization and appear in
 its activity log. The organization control is available even without a cap.
+Eligible agents and projects without a budget policy have their own execution
+controls on the same Budgets screen; no policy is created when using them.

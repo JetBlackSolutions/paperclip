@@ -8,7 +8,7 @@ import { notifyExternalObjectRefresh } from "./external-object-refresh-notificat
 import { notifyApprovalWork } from "./approval-work-notifications.js";
 import { notifyAttentionRetentionWork, notifyCompanyRetentionWork } from "./retention-work-notifications.js";
 import { addCents, compareCents, normalizeCents } from "@paperclipai/shared";
-import { and, desc, eq, inArray, sql, or, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql, or, isNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 
 import {
@@ -57,6 +57,8 @@ type ScopeRecord = {
   budgetHeld: boolean;
   executionAction?: BudgetExecutionAction | null;
 };
+
+type BudgetExecutionVisibility = { includeAgents: boolean };
 
 type PolicyRow = typeof budgetPolicies.$inferSelect;
 type IncidentRow = typeof budgetIncidents.$inferSelect;
@@ -111,6 +113,45 @@ function normalizeScopeName(scopeType: BudgetScopeType, name: string) {
   return name.trim().length > 0 ? name : scopeType;
 }
 
+function agentExecutionAction(row: Pick<typeof agents.$inferSelect, "lifecycleHolds" | "lifecycleState">): BudgetExecutionAction | null {
+  if (row.lifecycleHolds.includes("manual") && ["paused", "pausing"].includes(row.lifecycleState)) return "resume";
+  return !row.lifecycleHolds.length && ["ready", "resuming"].includes(row.lifecycleState) ? "pause" : null;
+}
+
+function projectExecutionAction(row: Pick<typeof projects.$inferSelect, "archivedAt" | "pausedAt" | "pauseReason">): BudgetExecutionAction | null {
+  if (row.archivedAt) return null;
+  if (row.pausedAt && row.pauseReason === "manual") return "resume";
+  return !row.pausedAt && !row.pauseReason ? "pause" : null;
+}
+
+async function listUnbudgetedExecution(db: Db, companyId: string, policyRows: PolicyRow[], showAgentExecution: boolean) {
+  const coveredScopes = new Set(policyRows.map((row) => `${row.scopeType}:${row.scopeId}`));
+  const [agentRows, projectRows] = await Promise.all([
+    showAgentExecution ? db.select({
+      id: agents.id, name: agents.name, lifecycleHolds: agents.lifecycleHolds, lifecycleState: agents.lifecycleState,
+    }).from(agents).where(eq(agents.companyId, companyId)).orderBy(asc(agents.name), asc(agents.id)) : [],
+    db.select({
+      id: projects.id, name: projects.name, archivedAt: projects.archivedAt,
+      pausedAt: projects.pausedAt, pauseReason: projects.pauseReason,
+    }).from(projects).where(and(eq(projects.companyId, companyId), isNull(projects.archivedAt)))
+      .orderBy(asc(projects.name), asc(projects.id)),
+  ]);
+  const scopes: NonNullable<BudgetOverview["unbudgetedExecution"]> = [];
+  for (const row of agentRows) {
+    const action = agentExecutionAction(row);
+    if (action && !coveredScopes.has(`agent:${row.id}`)) {
+      scopes.push({ scopeType: "agent", scopeId: row.id, name: normalizeScopeName("agent", row.name), action });
+    }
+  }
+  for (const row of projectRows) {
+    const action = projectExecutionAction(row);
+    if (action && !coveredScopes.has(`project:${row.id}`)) {
+      scopes.push({ scopeType: "project", scopeId: row.id, name: normalizeScopeName("project", row.name), action });
+    }
+  }
+  return scopes;
+}
+
 async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: string): Promise<ScopeRecord> {
   if (scopeType === "company") {
     const row = await db
@@ -156,8 +197,7 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
       paused: row.status === "paused",
       pauseReason: (row.pauseReason as ScopeRecord["pauseReason"]) ?? null,
       budgetHeld: row.lifecycleHolds.includes("budget"),
-      executionAction: row.lifecycleHolds.includes("manual") && ["paused", "pausing"].includes(row.lifecycleState) ? "resume"
-        : !row.lifecycleHolds.length && ["ready", "resuming"].includes(row.lifecycleState) ? "pause" : null,
+      executionAction: agentExecutionAction(row),
     };
   }
 
@@ -179,9 +219,7 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
     paused: Boolean(row.pausedAt),
     pauseReason: (row.pauseReason as ScopeRecord["pauseReason"]) ?? null,
     budgetHeld: row.pauseReason === "budget",
-    executionAction: row.archivedAt ? null
-      : !row.pausedAt && !row.pauseReason ? "pause"
-      : row.pausedAt && row.pauseReason === "manual" ? "resume" : null,
+    executionAction: projectExecutionAction(row),
   };
 }
 
@@ -1016,14 +1054,24 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
     /** The `activeIncidents` of `overview`, without the spend of every policy. */
     openIncidents: listOpenIncidents,
 
-    overview: async (companyId: string, showExecution = false): Promise<BudgetOverview> => {
+    overview: async (companyId: string, execution?: BudgetExecutionVisibility): Promise<BudgetOverview> => {
       const rows = await listPolicyRows(companyId);
-      const policies = await mapBudgetReads(rows, buildPolicySummary);
-      const activeIncidents = await listOpenIncidents(companyId);
-      const organization = showExecution ? await resolveScopeRecord(db, "company", companyId) : null;
+      const [policies, activeIncidents, organization, unbudgetedExecution] = await Promise.all([
+        mapBudgetReads(rows, async (row) => {
+          const summary = await buildPolicySummary(row);
+          if (!execution || (row.scopeType === "agent" && !execution.includeAgents)) {
+            delete summary.executionAction;
+          }
+          return summary;
+        }),
+        listOpenIncidents(companyId),
+        execution ? resolveScopeRecord(db, "company", companyId) : null,
+        execution ? listUnbudgetedExecution(db, companyId, rows, execution.includeAgents) : undefined,
+      ]);
       return {
         companyId,
         ...(organization ? { organizationExecution: { action: organization.executionAction ?? null } } : {}),
+        ...(unbudgetedExecution ? { unbudgetedExecution } : {}),
         policies,
         activeIncidents,
         pausedAgentCount: new Set(policies.filter((policy) => policy.scopeType === "agent" && policy.paused).map((policy) => policy.scopeId)).size,
@@ -1402,8 +1450,8 @@ export function budgetService(db: Db, _hooks: BudgetServiceHooks = {}) {
   return {
     listPolicies: (companyId: string) => withAccountingReadSnapshot(db, companyId,
       tx => budgetServiceInTransaction(tx).listPolicies(companyId)),
-    overview: (companyId: string, showExecution = false) => withAccountingReadSnapshot(db, companyId,
-      tx => budgetServiceInTransaction(tx).overview(companyId, showExecution)),
+    overview: (companyId: string, execution?: BudgetExecutionVisibility) => withAccountingReadSnapshot(db, companyId,
+      tx => budgetServiceInTransaction(tx).overview(companyId, execution)),
     openIncidents: (companyId: string) => withAccountingReadSnapshot(db, companyId,
       tx => budgetServiceInTransaction(tx).openIncidents(companyId)),
     evaluateAdmission: (companyId: string, agentId: string | null, context?: AdmissionContext) =>

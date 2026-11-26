@@ -320,6 +320,36 @@ describe("cost routes", () => {
     expect(mockCompanyService.update).not.toHaveBeenCalled();
   });
 
+  it("only returns new scope controls to company admins with the matching permissions", async () => {
+    const companyId = randomUUID();
+    const url = `/api/companies/${companyId}/budgets/overview`;
+    const board = (membershipRole: string) => ({
+      type: "board", source: "session", userId: "board-user", companyIds: [companyId],
+      memberships: [{ companyId, status: "active", membershipRole }],
+    });
+    expect((await request(createAppWithActor(board("viewer"))).get(url)).status).toBe(200);
+    expect(mockBudgetService.overview).toHaveBeenLastCalledWith(companyId, undefined);
+    expect((await request(createAppWithActor({
+      type: "agent", companyId, agentId: randomUUID(),
+    })).get(url)).status).toBe(200);
+    expect(mockBudgetService.overview).toHaveBeenLastCalledWith(companyId, undefined);
+
+    mockAccessService.decide.mockImplementation(async ({ action }) => ({
+      allowed: action !== "agents:create", explanation: "No agent management grant",
+    }));
+    expect((await request(createAppWithActor(board("admin"))).get(url)).status).toBe(200);
+    expect(mockBudgetService.overview).toHaveBeenLastCalledWith(companyId, { includeAgents: false });
+    expect((await request(createAppWithActor(board("admin"))).post(url.replace("/overview", "/execution"))
+      .send({ scopeType: "agent", scopeId: randomUUID(), action: "pause" })).status).toBe(403);
+    expect(mockAgentService.getById).not.toHaveBeenCalled();
+
+    mockAccessService.decide.mockResolvedValue({ allowed: true });
+    expect((await request(createAppWithActor(board("owner"))).get(url)).status).toBe(200);
+    expect(mockBudgetService.overview).toHaveBeenLastCalledWith(companyId, { includeAgents: true });
+    expect((await request(createAppWithActor(board("owner"))).get(url.replace(companyId, randomUUID()))).status).toBe(403);
+    expect(mockBudgetService.overview).toHaveBeenCalledTimes(4);
+  });
+
   it("rejects company budget updates for board users outside the company", async () => {
     const app = createAppWithActor({
       type: "board",

@@ -320,6 +320,16 @@ export function Costs({
     setExecutionTarget({ ...input, companyId, name });
   };
 
+  const scopedExecutionButton = (
+    scopeType: "agent" | "project", scopeId: string, name: string, action: BudgetExecutionControlInput["action"],
+  ) => (
+    <Button variant="outline" disabled={executionMutation.isPending || !!budgetError}
+      aria-label={`${executionActionLabel(scopeType, action)}: ${name}`}
+      onClick={() => openExecutionControl({ scopeType, scopeId, action }, name)}>
+      {executionActionLabel(scopeType, action)}
+    </Button>
+  );
+
   const incidentMutation = useMutation({
     mutationFn: (input: { incidentId: string; action: "keep_paused" | "raise_budget_and_resume"; amount?: number }) =>
       budgetsApi.resolveIncident(companyId, input.incidentId, input),
@@ -1002,13 +1012,13 @@ export function Costs({
                   <MetricTile
                     label="Paused agents"
                     value={String(budgetData?.pausedAgentCount ?? 0)}
-                    subtitle="Agent heartbeats paused"
+                    subtitle="Agents with a budget policy"
                     icon={Coins}
                   />
                   <MetricTile
                     label="Paused projects"
                     value={String(budgetData?.pausedProjectCount ?? 0)}
-                    subtitle="New project work paused"
+                    subtitle="Projects with a budget policy"
                     icon={DollarSign}
                   />
                 </CardContent>
@@ -1041,6 +1051,30 @@ export function Costs({
                 </div>
               ) : null}
 
+              {budgetData?.organizationExecution && !!budgetData.unbudgetedExecution?.length && (
+                <Card>
+                  <details key={companyId} className="group">
+                    <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg px-5 py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+                      <ChevronRight aria-hidden="true" className="size-4 shrink-0 group-open:rotate-90" />
+                      <span>Agents and projects without budget policies</span>
+                      <span className="ml-auto text-muted-foreground">{budgetData.unbudgetedExecution.length}</span>
+                    </summary>
+                    <p className="px-5 pb-3 text-sm text-muted-foreground">Pause or resume eligible work without setting a spending limit.</p>
+                    <ul className="divide-y divide-border border-t">
+                      {budgetData.unbudgetedExecution.map(({ scopeType, scopeId, name, action }) => (
+                        <li key={`${scopeType}:${scopeId}`} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                          <div className="min-w-0">
+                            <p className="break-words text-sm font-medium">{name}</p>
+                            <p className="text-xs capitalize text-muted-foreground">{scopeType}{action === "resume" ? " · Manually paused" : ""}</p>
+                          </div>
+                          {scopedExecutionButton(scopeType, scopeId, name, action)}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                </Card>
+              )}
+
               <div className="space-y-5">
                 {(["company", "agent", "project"] as const).map((scopeType) => {
                   const rows = budgetPoliciesByScope[scopeType];
@@ -1062,17 +1096,8 @@ export function Costs({
                           <BudgetPolicyCard
                             key={summary.policyId}
                             summary={summary}
-                            executionControl={budgetData?.organizationExecution && scopeType !== "company" && summary.executionAction && (
-                              <Button variant="outline" disabled={executionMutation.isPending || !!budgetError}
-                                aria-label={`${executionActionLabel(scopeType, summary.executionAction)}: ${summary.scopeName}`}
-                                onClick={() => {
-                                  if (summary.executionAction) openExecutionControl(
-                                    { scopeType, scopeId: summary.scopeId, action: summary.executionAction }, summary.scopeName,
-                                  );
-                                }}>
-                                {executionActionLabel(scopeType, summary.executionAction)}
-                              </Button>
-                            )}
+                            executionControl={budgetData?.organizationExecution && scopeType !== "company" && summary.executionAction
+                              && scopedExecutionButton(scopeType, summary.scopeId, summary.scopeName, summary.executionAction)}
                             onReservationChange={(reservationCents) => policyMutation.mutate({ summary, changes: { reservationCents } })}
                             onUnpricedUsagePolicyChange={(unpricedUsagePolicy) => policyMutation.mutate({ summary, changes: { unpricedUsagePolicy } })}
                             isSaving={policyMutation.isPending}

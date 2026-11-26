@@ -61,6 +61,21 @@ PATCH /api/agents/{agentId}
 { "budgetMonthlyCents": 5000 }
 ```
 
+### Pause or resume execution
+
+```
+POST /api/companies/{companyId}/budgets/execution
+{ "scopeType": "project", "scopeId": "{projectId}", "action": "pause" }
+```
+
+This requires a board administrator with access to the company. Agent controls
+also require permission to manage agents. Scope types are `company`, `agent`,
+and `project`; the scope ID must belong to the company. `pause` and `resume` do
+not create or change budgets. Organization and agent pause request Stop for
+active agent runs. Project pause blocks new work but does not stop existing runs.
+Resume releases only a manual pause, not a budget hard stop or other hold.
+Eligible actions are shown under Audit → Budgets, even without a budget policy.
+
 ## Budget Enforcement
 
 | Threshold | Effect |
