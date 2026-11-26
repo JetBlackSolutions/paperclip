@@ -80,6 +80,25 @@ describe("DotRunnerConnection", () => {
     expect(el.textContent).toContain("You do not need to pair it again");
   });
 
+  it("tells the operator to pair again when the expired Dot was paired before renewable access", async () => {
+    apiMock.get.mockResolvedValue({
+      enabled: true,
+      resourceUrl: "https://paperclip.example/mcp/runner",
+      binding: {
+        id: "33333333-3333-4333-8333-333333333333",
+        status: "ready",
+        connected: true,
+        subscriptionVerified: false,
+        subscriptionExpired: true,
+        renewable: false,
+        hasPendingChallenge: false,
+      },
+    });
+    const el = await renderConnection();
+    expect(el.textContent).toContain("Pair the Dot again");
+    expect(el.textContent).not.toContain("You do not need to pair it again");
+  });
+
   it("includes 24-hour subscription renewal guidance in the Dot setup prompt", () => {
     const prompt = buildDotSetupPrompt({
       companyId: "11111111-1111-4111-8111-111111111111",

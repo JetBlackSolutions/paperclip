@@ -159,11 +159,15 @@ function createBroker(db: Db) {
       const [active] = await db.select({ id: assignments.id, runId: assignments.runId, status: assignments.status, lastActivityAt: assignments.lastActivityAt }).from(assignments)
         .where(and(eq(assignments.bindingId, b.id), inArray(assignments.status, ["offered", "accepted"])));
       const routine = b.providerKind === "grok_bot" ? await grokRoutineService(db).state(companyId, agentId, b.id) : null;
+      const [grant] = b.grantId ? await db.select({ scopes: mcpOauthGrants.scopes }).from(mcpOauthGrants).where(eq(mcpOauthGrants.id, b.grantId)) : [];
       return { id: b.id, companyId: b.companyId, agentId: b.agentId, generation: b.generation, status: b.status, providerKind: b.providerKind, dotUrl: b.dotUrl,
         readyAt: b.readyAt, pairingExpiresAt: b.pairingExpiresAt, challengeExpiresAt: b.challengeExpiresAt, connected: !!b.grantId, subscriptionVerified: b.providerKind === "openai_dot" && activeSubscriptions.length > 0,
         // Event subscriptions last at most 24 hours. A ready binding keeps its
         // pairing; the Dot only needs to subscribe again.
         subscriptionExpired: b.providerKind === "openai_dot" && b.status === "ready" && !!b.readyAt && !!b.grantId && activeSubscriptions.length === 0,
+        // A pairing made before renewable access has no refresh token. Once its
+        // subscription expires its Dot cannot sign in to subscribe again.
+        renewable: !grant || grant.scopes.includes("offline_access"),
         wakeVerified: b.providerKind === "grok_bot" ? routine?.verified === true && !await grokRoutineService(db).recoveryNeeded(companyId, agentId) : activeSubscriptions.length > 0 && !!b.readyAt, routine,
         hasPendingChallenge: !!b.challengeHash && !!b.challengeExpiresAt && b.challengeExpiresAt > new Date(),
         assignment: active ? { ...active, attentionRequired: active.status === "accepted" && active.lastActivityAt.getTime() < Date.now() - 15 * 60_000 } : null };
@@ -225,11 +229,7 @@ function createBroker(db: Db) {
           : fail("External provider is disabled for new work.");
       }
       if (state.id === bindingId && state.subscriptionExpired) {
-        // A pairing made before renewable access has no refresh token: its Dot can no
-        // longer sign in to subscribe again, so only a new pairing repairs it.
-        const [legacy] = await db.select({ scopes: mcpOauthGrants.scopes }).from(bindings)
-          .innerJoin(mcpOauthGrants, eq(mcpOauthGrants.id, bindings.grantId)).where(eq(bindings.id, bindingId));
-        if (legacy && !legacy.scopes.includes("offline_access")) {
+        if (!state.renewable) {
           throw failUnavailable("dot_pairing_required",
             "Dot's event subscription expired, and this pairing was made before renewable access, so the Dot cannot subscribe again. Pair the Dot again.");
         }
