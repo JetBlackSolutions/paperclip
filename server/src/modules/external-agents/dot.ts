@@ -197,6 +197,16 @@ function createBroker(db: Db) {
         throw error;
       }
     },
+    /** The reason `canStartNewWork` is false, for the person waiting on the run. */
+    async newWorkBlockReason(companyId: string, agentId: string, bindingId: string): Promise<string | null> {
+      try {
+        await this.snapshot(companyId, agentId, bindingId);
+        return null;
+      } catch (error) {
+        if (error instanceof McpOAuthError) return error.message;
+        throw error;
+      }
+    },
     async snapshot(companyId: string, agentId: string, bindingId: string): Promise<DotBindingSnapshot> {
       const state = await this.bindingForAgent(companyId, agentId);
       if (!state || !await enabled(state.providerKind)) throw fail("External provider is disabled for new work.");

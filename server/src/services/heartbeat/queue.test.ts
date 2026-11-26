@@ -10,7 +10,7 @@ import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } fro
 import { createPostgresWakeQueueAdapter, createWakeAdmissionWriter } from "../../modules/wake-queue/adapters/postgres.js";
 import { createReleaseIssueExecution } from "../../modules/wake-queue/application/use-cases.js";
 import { closeProcessRunAdmission, resetProcessRunAdmissionForTests } from "./run-admission.js";
-import { createHeartbeatQueue, DEFERRED_WAKE_CONTEXT_KEY, notifyOtherAgentsQueuedOnSettledIssue, shouldDeferFollowupWakeForSameIssue, shouldQueueFollowupForRunningIssueWake, type HeartbeatQueueDependencies } from "./queue.js";
+import { createHeartbeatQueue, EXTERNAL_BOT_START_WAIT_MS, DEFERRED_WAKE_CONTEXT_KEY, notifyOtherAgentsQueuedOnSettledIssue, shouldDeferFollowupWakeForSameIssue, shouldQueueFollowupForRunningIssueWake, type HeartbeatQueueDependencies } from "./queue.js";
 import { createWakeQueue } from "../../modules/wake-queue/index.js";
 import { TransactionScope } from "../../modules/wake-queue/application/ports.js";
 import { enrichWakeContextSnapshot, mergeCoalescedContextSnapshot } from "./run-preparation.js";
@@ -1188,6 +1188,32 @@ describe.skipIf(!support.supported)("heartbeat queue database wiring", () => {
     expect((await db.select().from(issues).where(eq(issues.id, issue.id)))[0].status).toBe("todo");
     expect(deps.executeRun).not.toHaveBeenCalled();
     expect(deps.setRunStatusFromLive).not.toHaveBeenCalled();
+  });
+
+  it("ends new work with the reason once an external bot has stayed unready past the wait", async () => {
+    const { run, agent } = await fixture("queued");
+    const waited = new Date(Date.now() - EXTERNAL_BOT_START_WAIT_MS - 1_000);
+    await db.update(heartbeatRuns).set({ responsibleUserId: "queue-test-user", createdAt: waited }).where(eq(heartbeatRuns.id, run.id));
+    const deps = { ...callbacks(db), canStartNewExternalBotWork: vi.fn(async () => false),
+      externalBotNewWorkBlockReason: vi.fn(async () => "Grok Bot requires a verified routine round trip.") };
+    deps.getAgent.mockResolvedValue({ ...agent, adapterType: "paperclip_runner", adapterConfig: { provider: "grok_bot" } });
+    const queue = createHeartbeatQueue(db, deps);
+    expect(await queue.startNextQueuedRunForAgent(agent.id)).toEqual([]);
+    expect(deps.cancelRunInternal).toHaveBeenCalledExactlyOnceWith(run.id,
+      expect.stringMatching(/^Not started: the external agent was not ready to take new work for 30 minutes\. Grok Bot requires a verified routine round trip\. Repair its connection/),
+      { errorCode: "external_agent_not_ready" });
+    expect(deps.executeRun).not.toHaveBeenCalled();
+  });
+
+  it("keeps new work waiting for an unready external bot inside the wait", async () => {
+    const { run, agent } = await fixture("queued");
+    await db.update(heartbeatRuns).set({ responsibleUserId: "queue-test-user" }).where(eq(heartbeatRuns.id, run.id));
+    const deps = { ...callbacks(db), canStartNewExternalBotWork: vi.fn(async () => false), externalBotNewWorkBlockReason: vi.fn(async () => "not ready") };
+    deps.getAgent.mockResolvedValue(agent);
+    const queue = createHeartbeatQueue(db, deps);
+    expect(await queue.startNextQueuedRunForAgent(agent.id)).toEqual([]);
+    expect(deps.cancelRunInternal).not.toHaveBeenCalled();
+    expect(deps.externalBotNewWorkBlockReason).not.toHaveBeenCalled();
   });
 
   it("admits the same queued input after the external connection is repaired", async () => {
