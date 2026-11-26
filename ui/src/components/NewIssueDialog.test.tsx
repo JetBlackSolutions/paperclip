@@ -134,6 +134,12 @@ vi.mock("../api/agents", () => ({
   agentsApi: mockAgentsApi,
 }));
 
+// The assignee suggestion reads routines and checks the decision model.
+vi.mock("../api/routines", () => ({ routinesApi: { list: vi.fn(async () => []) } }));
+vi.mock("../api/decision-models", () => ({
+  decisionModelsApi: { availability: vi.fn(async () => ({ available: false, reason: "not_configured" })) },
+}));
+
 vi.mock("../api/auth", () => ({
   authApi: mockAuthApi,
 }));
@@ -603,6 +609,119 @@ describe("NewIssueDialog", () => {
     expect(localStorage.getItem("paperclip:recent-assignees:company-1")).toContain("user:user-1");
     expect(container.querySelector('[data-testid="task-chat-composer-model-label"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Describe a task…"]')?.value).toBe("");
+    act(() => root.unmount());
+  });
+
+  const titledAgents = defaultAgents.map((agent) => (agent.id === "worker" ? { ...agent, title: "WordPress Developer", reportsTo: "ceo" } : agent));
+  const assigneeLabel = () => container.querySelector('[data-testid="task-chat-composer-assignee-label"]')?.textContent;
+  const describeTask = (text: string) =>
+    typeTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Describe a task…"]')!, text);
+
+  it("switches the default assignee to the agent the request describes and offers its lead", async () => {
+    mockAgentsApi.list.mockResolvedValue(titledAgents);
+    const { root } = renderDialog(container);
+    await waitForAssertion(() => expect(assigneeLabel()).toBe("CEO"));
+    await describeTask("Update the WordPress theme on the client site");
+    // The suggestion waits for a pause in typing.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
+    await waitForAssertion(() => expect(assigneeLabel()).toBe("Worker"));
+    expect(container.querySelector('[data-testid="assignee-suggestion"]')?.textContent).toContain("Suggested: Worker · matches “WordPress”");
+    // A suggestion is not the person's own choice, so it does not become the next default.
+    expect(localStorage.getItem("paperclip:recent-assignees:company-1")).toBeNull();
+    const toLead = [...container.querySelectorAll("button")].find((button) => button.textContent === "Send to CEO (lead)")!;
+    act(() => toLead.click());
+    expect(assigneeLabel()).toBe("CEO");
+    await waitForAssertion(() => expect(container.querySelector('[data-testid="assignee-suggestion"]')).toBeNull());
+    act(() => root.unmount());
+  });
+
+  it("keeps a parked task in Backlog when a suggestion changes the assignee", async () => {
+    mockAgentsApi.list.mockResolvedValue(titledAgents);
+    dialogState.newIssueDefaults = { status: "backlog" };
+    const { root } = renderDialog(container);
+    await waitForAssertion(() => expect(assigneeLabel()).toBe("CEO"));
+    await describeTask("Update the WordPress theme on the client site");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
+    await waitForAssertion(() => expect(assigneeLabel()).toBe("Worker"));
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Create task"]')!.click());
+    await waitForAssertion(() => expect(mockIssuesApi.create).toHaveBeenCalled());
+    expect(mockIssuesApi.create.mock.calls[0][1]).toMatchObject({ status: "backlog", assigneeAgentId: "worker" });
+    act(() => root.unmount());
+    dialogState.newIssueDefaults = {};
+  });
+
+  it("keeps following the request after an unfinished task is closed and reopened", async () => {
+    mockAgentsApi.list.mockResolvedValue(titledAgents);
+    // The draft an earlier session left: the suggestion replaced the CEO default and the person never chose.
+    localStorage.setItem("paperclip:issue-draft:user-1", JSON.stringify({
+      title: "", description: "Update the WordPress theme on the client site", status: "todo", priority: "", projectId: "",
+      assigneeValue: "agent:worker", assigneeDefaultValue: "agent:ceo", reviewerValue: "", approverValue: "",
+      assigneeModelOverride: "", assigneeThinkingEffort: "", assigneeChrome: false,
+    }));
+    const { root } = renderDialog(container);
+    await waitForAssertion(() => expect(assigneeLabel()).toBe("Worker"));
+    await describeTask("Book flights and a hotel for the conference");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
+    await waitForAssertion(() => expect(assigneeLabel()).toBe("CEO"));
+    act(() => root.unmount());
+  });
+
+  it("does not return a reopened task to a default that can no longer be assigned", async () => {
+    mockAgentsApi.list.mockResolvedValue(titledAgents);
+    localStorage.setItem("paperclip:issue-draft:user-1", JSON.stringify({
+      title: "", description: "Update the WordPress theme on the client site", status: "todo", priority: "", projectId: "",
+      assigneeValue: "agent:worker", assigneeDefaultValue: "agent:deleted", reviewerValue: "", approverValue: "",
+      assigneeModelOverride: "", assigneeThinkingEffort: "", assigneeChrome: false,
+    }));
+    const { root } = renderDialog(container);
+    await waitForAssertion(() => expect(assigneeLabel()).toBe("Worker"));
+    await describeTask("Book flights and a hotel for the conference");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
+    await waitForAssertion(() => expect(assigneeLabel()).not.toBe("Worker"));
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Create task"]')!.click());
+    await waitForAssertion(() => expect(mockIssuesApi.create).toHaveBeenCalled());
+    expect(mockIssuesApi.create.mock.calls[0][1].assigneeAgentId).not.toBe("deleted");
+    act(() => root.unmount());
+  });
+
+  it("does not follow the request in a reopened task whose assignee the person chose", async () => {
+    mockAgentsApi.list.mockResolvedValue(titledAgents);
+    localStorage.setItem("paperclip:issue-draft:user-1", JSON.stringify({
+      title: "", description: "Something for the boss", status: "todo", priority: "", projectId: "",
+      assigneeValue: "agent:ceo", reviewerValue: "", approverValue: "",
+      assigneeModelOverride: "", assigneeThinkingEffort: "", assigneeChrome: false,
+    }));
+    const { root } = renderDialog(container);
+    await waitForAssertion(() => expect(assigneeLabel()).toBe("CEO"));
+    await describeTask("Update the WordPress theme on the client site");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
+    expect(assigneeLabel()).toBe("CEO");
+    act(() => root.unmount());
+  });
+
+  it("leaves an assignee the task was opened with alone, whatever the request says", async () => {
+    mockAgentsApi.list.mockResolvedValue(titledAgents);
+    dialogState.newIssueDefaults = { assigneeAgentId: "ceo" };
+    const { root } = renderDialog(container);
+    await waitForAssertion(() => expect(assigneeLabel()).toBe("CEO"));
+    await describeTask("Update the WordPress theme on the client site");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
+    expect(assigneeLabel()).toBe("CEO");
+    expect(container.querySelector('[data-testid="assignee-suggestion"]')).toBeNull();
+    act(() => root.unmount());
+    dialogState.newIssueDefaults = {};
+  });
+
+  it("leaves an assignee the person picked alone, whatever the request says", async () => {
+    mockAgentsApi.list.mockResolvedValue(titledAgents);
+    const { root } = renderDialog(container);
+    await waitForAssertion(() => expect(assigneeLabel()).toBe("CEO"));
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Select assignee"]')!.click());
+    const me = [...container.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((button) => button.textContent?.includes("Me"))!;
+    act(() => me.click());
+    await describeTask("Update the WordPress theme on the client site");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
+    expect(assigneeLabel()).toBe("Me");
     act(() => root.unmount());
   });
 

@@ -18,6 +18,7 @@ import {
   toggleAllGitHubRepositoriesSchema,
   createAiConnectionSchema,
   updateDecisionModelSchema,
+  assigneeSuggestionRequestSchema,
   updatePromptInjectionPreventionSchema,
   updateAgentObservabilitySchema,
   agentObservabilityRevisionSchema,
@@ -1524,6 +1525,7 @@ const BOARD_ONLY_OPERATIONS = new Set([
   "GET /api/companies/{companyId}/decision-model",
   "PUT /api/companies/{companyId}/decision-model",
   "POST /api/companies/{companyId}/decision-model/test",
+  "POST /api/companies/{companyId}/agents/assignee-suggestion",
   "GET /api/companies/{companyId}/observability",
   "PUT /api/companies/{companyId}/observability",
   "DELETE /api/companies/{companyId}/observability",
@@ -12088,6 +12090,12 @@ registerCurrentRoute({
   description: companyModelServiceSettingsPage("Decision model"),
   summary: "Run the fixed billed three-question setup test as a connection manager",
   responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+registerCurrentRoute({
+  method: "post", path: "/api/companies/{companyId}/agents/assignee-suggestion", tags: ["agents"],
+  summary: "Ask the company decision model which candidate agent should own a new task (billed)",
+  body: assigneeSuggestionRequestSchema,
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 422: r.unprocessable },
 });
 registerCurrentRoute({
   method: "get", path: "/api/companies/{companyId}/decision-model/history", tags: ["decision-models"],

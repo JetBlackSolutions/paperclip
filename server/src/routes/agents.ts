@@ -5,6 +5,10 @@ import { isObjectJournalBusyError } from "../services/object-byte-journal.js";
 import { readTaskPanelActivations } from "../services/plugin-task-panels.js";
 import { enqueueNativeRuntimeResponse } from "../services/native-runtime/native-runtime-response-delivery.js";
 import { latestFailedRunsByAgent } from "@paperclipai/shared";
+import { assigneeSuggestionRequestSchema } from "@paperclipai/shared";
+import { assigneeFromDecision, assigneeSuggestionFeature, buildAssigneeDecision } from "../services/assignee-suggestions.js";
+import { decisionModelService } from "../services/decision-models.js";
+import { routineService } from "../services/routines.js";
 import { agentConfigurationSpec } from "@paperclipai/shared";
 import { agentConfigurationRevision, restoreAgentConfigurationRedactions } from "../lib/agent-configuration-revision.js";
 import { CEO_HIRING_DENIAL_KEY, ceoHiringDenial, normalizeAgentPermissions } from "../lib/agent-permissions.js";
@@ -4031,6 +4035,47 @@ export function agentRoutes(
     }
     res.json(result.map((agent) => redactForRestrictedAgentView(agent)));
   });
+
+  // Asks the company's decision model which agent should own a new task. The
+  // client names the candidates by id; their descriptions are read here.
+  router.post(
+    "/companies/:companyId/agents/assignee-suggestion",
+    validate(assigneeSuggestionRequestSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      assertCompanyAccess(req, companyId);
+      assertBoard(req);
+      const readable = await filterAgentsForActor(req, await svc.list(companyId));
+      const byId = new Map(readable.map((agent) => [agent.id, agent]));
+      const requested = [...new Set(req.body.candidateAgentIds as string[])];
+      const chosen = requested.flatMap((id) => {
+        const agent = byId.get(id);
+        // The same agents a task may be assigned to: creation rejects the others.
+        return agent && agent.status !== "terminated" && agent.status !== "pending_approval"
+          && agent.orgChainHealth?.status !== "invalid_org_chain" ? [agent] : [];
+      });
+      if (chosen.length < 2) {
+        res.status(422).json({ error: "At least two candidate agents must be assignable in this company" });
+        return;
+      }
+      const routineTitles = new Map<string, string[]>();
+      for (const routine of await routineService(db).list(companyId)) {
+        if (routine.status === "archived" || !routine.assigneeAgentId || !byId.has(routine.assigneeAgentId)) continue;
+        routineTitles.set(routine.assigneeAgentId, [...(routineTitles.get(routine.assigneeAgentId) ?? []), routine.title]);
+      }
+      const { request, agentIdByKey } = buildAssigneeDecision(req.body.text, chosen.map((agent) => ({
+        id: agent.id,
+        name: agent.name,
+        title: agent.title,
+        capabilities: agent.capabilities,
+        reportsToName: agent.reportsTo ? byId.get(agent.reportsTo)?.name ?? null : null,
+        routineTitles: routineTitles.get(agent.id),
+      })));
+      const decisions = decisionModelService(db, { budgetHooks: { cancelWorkForScope: heartbeat.cancelBudgetScopeWork } });
+      const result = await decisions.decide({ companyId, actor: req.actor, feature: assigneeSuggestionFeature }, request);
+      res.json(assigneeFromDecision(result, agentIdByKey));
+    },
+  );
 
   router.get("/instance/scheduler-heartbeats", async (req, res) => {
     assertInstanceAdmin(req);
