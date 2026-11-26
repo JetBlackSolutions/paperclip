@@ -3494,6 +3494,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                                     agent={tailAgent ?? (tailAgentId ? { id: tailAgentId } : undefined)}
                                     status={optimisticRunnerStartup ? "queued" : tailStatus}
                                     execution={liveRun?.id === tailRunId ? liveRun.execution : null}
+                                    dotAuthorityUnavailable={liveRun?.id === tailRunId && liveRun?.dotAuthorityUnavailable}
                                     preparationLabel={optimisticRunnerStartup && submissionTakingLonger ? "Taking longer than usual…" : undefined}
                                     startedAtMs={tailStartedAtMs}
                                     finishedAtMs={tailFinishedAtMs}
@@ -3528,6 +3529,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                                       }
                                       startedAtMs={tailStartedAtMs}
                                       finishedAtMs={tailFinishedAtMs}
+                                      dotAuthorityUnavailable={liveRun?.id === tailRunId && liveRun?.dotAuthorityUnavailable}
                                       activityUnavailable={tailActivityUnavailable}
                                       awaitingContinuation={
                                         paperclipRunnerTailAwaitingContinuation

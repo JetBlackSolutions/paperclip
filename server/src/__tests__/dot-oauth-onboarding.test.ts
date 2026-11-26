@@ -11,6 +11,10 @@ import { instanceSettingsService } from "../services/instance-settings.js";
 import { createDotRunnerMcpTools, dotRunnerBroker } from "../services/dot-runner-broker.js";
 import { publicMcpManagementRoutes, publicMcpIngressRoutes } from "../routes/public-mcp.js";
 
+import { agentService } from "../services/agents.js";
+import { heartbeatService } from "../services/heartbeat.js";
+import { issueRunPresenceService } from "../services/issue-run-presence.js";
+
 const config = { origin: "https://paperclip.example", resource: "https://paperclip.example/mcp/runner" };
 const callback = "https://chatgpt.com/connector_platform_oauth_redirect";
 describe("Dot onboarding with an operator-issued pairing capability", () => {
@@ -100,7 +104,7 @@ describe("Dot onboarding with an operator-issued pairing capability", () => {
     const [issue] = await db.insert(issues).values({ companyId: f.company.id, title: "Dot investigation", assigneeAgentId: f.agent.id }).returning();
     const nativeSessionId = randomUUID();
     const [run] = await db.insert(heartbeatRuns).values({ companyId: f.company.id, agentId: f.agent.id, runtimeMode: "native",
-      driverKind: "openai_dot_mcp", status: "running", nativeIssueId: issue!.id, nativeSessionId }).returning();
+      driverKind: "openai_dot_mcp", status: "running", issueId: issue!.id, nativeIssueId: issue!.id, nativeSessionId }).returning();
     await db.update(issues).set({ executionRunId: run!.id }).where(eq(issues.id, issue!.id));
     await db.insert(nativeRunFinalizations).values({ runId: run!.id, issueId: issue!.id, companyId: f.company.id,
       phase: "running", controllerGeneration: 1, leaseExpiresAt: new Date(Date.now() + 60_000) });
@@ -111,6 +115,14 @@ describe("Dot onboarding with an operator-issued pairing capability", () => {
     const tools = createDotRunnerMcpTools(db);
     const read = () => tools.callTool(principal, "paperclip_dot_read", { assignmentId: assignment!.id });
     const capabilities = () => tools.callTool(principal, "paperclip_dot_capabilities", {});
+    const chat = issueRunPresenceService(db, { heartbeat: heartbeatService(db), getAgentById: agentService(db).getById });
+    const chatIssue = { ...issue!, executionRunId: run!.id };
+    const expectChatAvailability = async (unavailable: boolean) => {
+      const expected = { id: run!.id, status: "running", dotAuthorityUnavailable: unavailable };
+      await expect(chat.activeRun(chatIssue)).resolves.toMatchObject(expected);
+      await expect(chat.liveRuns(chatIssue)).resolves.toEqual(expect.arrayContaining([expect.objectContaining(expected)]));
+    };
+    await expectChatAvailability(false);
     await expect(read()).resolves.toMatchObject({ result: { status: "accepted" } });
     await expect(capabilities()).resolves.toMatchObject({ result: { assignment: { id: assignment!.id, status: "accepted", attentionRequired: false } } });
 
@@ -130,10 +142,22 @@ describe("Dot onboarding with an operator-issued pairing capability", () => {
     expect((await db.select().from(dotRunnerAssignments).where(eq(dotRunnerAssignments.id, assignment!.id)))[0]?.status).toBe("accepted");
     expect((await db.select().from(issues).where(eq(issues.id, issue!.id)))[0]?.executionRunId).toBe(nextRun!.id);
 
+    await expectChatAvailability(true);
+    await expect(broker.chatRunAuthorityUnavailable(f.company.id, f.agent.id, nextRun!.id)).resolves.toBe(false);
+    await expect(broker.chatRunAuthorityUnavailable(randomUUID(), f.agent.id, run!.id)).resolves.toBe(false);
+    await expect(broker.chatRunAuthorityUnavailable(f.company.id, randomUUID(), run!.id)).resolves.toBe(false);
+
     // A temporary authority gap must not fence a run that can regain its claim.
     await db.update(issues).set({ executionRunId: run!.id }).where(eq(issues.id, issue!.id));
     await expect(read()).resolves.toMatchObject({ result: { status: "accepted" } });
     await expect(capabilities()).resolves.toMatchObject({ result: { assignment: { id: assignment!.id, status: "accepted", attentionRequired: false } } });
+    await expectChatAvailability(false);
+
+    // An expired assignment denies chat operations even while its run row remains running.
+    await db.update(dotRunnerAssignments).set({ expiresAt: new Date(0) }).where(eq(dotRunnerAssignments.id, assignment!.id));
+    await expect(read()).rejects.toThrow("Assignment authority expired or was revoked");
+    await expectChatAvailability(true);
+    expect((await db.select().from(dotRunnerAssignments).where(eq(dotRunnerAssignments.id, assignment!.id)))[0]?.status).toBe("accepted");
   });
 
   it("refreshes a Dot connection after years of inactivity, still rotates and revokes on replay", async () => {

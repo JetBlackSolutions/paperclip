@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { agents as agentsTable, heartbeatRuns, type Db } from "@paperclipai/db";
 import { agentAvatarUrl, resolveAgentAppearance } from "@paperclipai/shared";
 import { executionProjectionForRun, executionProjectionsForRuns } from "./execution-projection.js";
+import { dotRunnerBroker } from "./dot-runner-broker.js";
 import type { heartbeatService } from "./heartbeat.js";
 import type { agentService } from "./agents.js";
 
@@ -38,6 +39,12 @@ export function issueRunPresenceService(
   },
 ) {
   const { heartbeat } = deps;
+
+  async function dotAuthorityUnavailable(issue: IssueRunPresenceIssue,
+    run: { id: string; agentId: string; status: string }, adapterType: string) {
+    return run.status === "running" && adapterType === "paperclip_runner" &&
+      await dotRunnerBroker(db).chatRunAuthorityUnavailable(issue.companyId, run.agentId, run.id);
+  }
 
   async function liveRuns(issue: IssueRunPresenceIssue) {
     const rows = await db
@@ -87,6 +94,7 @@ export function issueRunPresenceService(
       agentAppearance: resolveAgentAppearance(run.agentAppearance, run.agentId),
       avatarUrl: agentAvatarUrl(resolveAgentAppearance(run.agentAppearance, run.agentId), 512),
       execution: projections.get(run.id) ?? null,
+      dotAuthorityUnavailable: await dotAuthorityUnavailable(issue, run, run.adapterType),
       outputSilence: await heartbeat.buildRunOutputSilence({ ...run, companyId: issue.companyId }),
     })));
   }
@@ -119,6 +127,7 @@ export function issueRunPresenceService(
     return {
       ...decoratedRun,
       execution: await executionProjectionForRun(db, issue.companyId, run.id),
+      dotAuthorityUnavailable: await dotAuthorityUnavailable(issue, run, agent.adapterType),
       agentId: agent.id,
       agentName: agent.name,
       agentAppearance: agent.appearance,

@@ -1661,6 +1661,22 @@ describe("TaskChatThread runtime transcript selection", () => {
     expect(nativeRuns.map((run) => run.id)).toEqual(["native-run"]);
   });
 
+  it.each([false, true])("shows the exact Dot run access loss in task chat (mobile=%s)", (mobile) => {
+    sidebarState.isMobile = mobile;
+    const run = nativeRunningRun();
+    const props = { comments: [], onAdd: async () => {}, issueStatus: "in_progress", issueAssigneeAgentId: run.agentId };
+    renderThread({ ...props, activeRun: run });
+    expect(container.querySelector('[data-testid="task-chat-current-activity-label"]')?.textContent).toBe("Thinking");
+    const unavailable = { ...run, dotAuthorityUnavailable: true };
+    renderThread({ ...props, activeRun: unavailable, liveRuns: [unavailable] });
+    expect(container.querySelector('[data-testid="task-chat-turn-status-header"]')?.textContent)
+      .toBe("Paperclip access unavailable");
+    expect(container.textContent).toContain("This run cannot reply or finish through Paperclip");
+    expect(container.querySelector('[data-testid="task-chat-current-activity-label"]')).toBeNull();
+    renderThread({ ...props, activeRun: run, liveRuns: [run] });
+    expect(container.querySelector('[data-testid="task-chat-current-activity-label"]')?.textContent).toBe("Thinking");
+  });
+
   it.each([false, true])("keeps the runner identity and activity mounted through startup (mobile=%s)", async (mobile) => {
     sidebarState.isMobile = mobile;
     const run = nativeRunningRun();

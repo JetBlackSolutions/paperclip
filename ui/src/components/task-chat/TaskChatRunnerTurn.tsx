@@ -73,15 +73,17 @@ function RunnerTurnStatus({
   finishedAtMs,
   continuedAfterSteering = false,
   waitingLabel,
+  dotAuthorityUnavailable = false,
 }: {
   status: string;
   startedAtMs: number | null;
   finishedAtMs?: number | null;
   continuedAfterSteering?: boolean;
   waitingLabel?: string | null;
+  dotAuthorityUnavailable?: boolean;
 }) {
   const terminal = isTerminalRunStatus(status);
-  useSecondTick(!terminal && startedAtMs != null);
+  useSecondTick(!terminal && !dotAuthorityUnavailable && startedAtMs != null);
   const elapsedMs =
     startedAtMs == null
       ? null
@@ -93,7 +95,7 @@ function RunnerTurnStatus({
 
   const failed = terminalStatusFailed(status);
   const label = terminal ? (failed ? "Stopped" : "Worked") : waitingLabel ?? "Working";
-  const suffix = terminal
+  const suffix = dotAuthorityUnavailable ? "" : terminal
     ? elapsed ? ` ${failed ? "after" : "for"} ${elapsed}` : ""
     : elapsed ? `${waitingLabel ? " · " : " for "}${elapsed}` : "";
 
@@ -127,13 +129,15 @@ interface RunnerHeaderProps {
   status: string;
   execution?: ExecutionProjection | null;
   preparationLabel?: string;
+  dotAuthorityUnavailable?: boolean;
   startedAtMs: number | null;
   finishedAtMs?: number | null;
   continuedAfterSteering?: boolean;
 }
 
-function runnerWaitingLabel({ runId, status, execution, preparationLabel }: RunnerHeaderProps) {
+function runnerWaitingLabel({ runId, status, execution, preparationLabel, dotAuthorityUnavailable }: RunnerHeaderProps) {
   if (isTerminalRunStatus(status)) return null;
+  if (dotAuthorityUnavailable) return "Paperclip access unavailable";
   if (execution?.phase === "waiting_for_provider") return execution.label;
   if (!runId && preparationLabel) return preparationLabel;
   return status === "queued" && execution?.cause ? execution.label : null;
@@ -144,7 +148,7 @@ export function TaskChatRunnerHeader({ statusContent, ...props }: RunnerHeaderPr
   return <div className="flex min-h-8 min-w-0 items-center gap-2 pb-1 pt-2" data-testid="task-chat-runner-identity-row">
     {props.agentName ? <TaskChatAgentIdentity agentName={props.agentName} agentIcon={props.agentIcon} agent={props.agent} /> : null}
     {statusContent ?? <RunnerTurnStatus status={props.status} startedAtMs={props.startedAtMs} finishedAtMs={props.finishedAtMs}
-      continuedAfterSteering={props.continuedAfterSteering} waitingLabel={runnerWaitingLabel(props)} />}
+      continuedAfterSteering={props.continuedAfterSteering} dotAuthorityUnavailable={props.dotAuthorityUnavailable && !isTerminalRunStatus(props.status)} waitingLabel={runnerWaitingLabel(props)} />}
   </div>;
 }
 
@@ -159,6 +163,7 @@ export function TaskChatRunnerTurn({
   preparationLabel,
   startedAtMs,
   finishedAtMs,
+  dotAuthorityUnavailable = false,
   activityUnavailable = false,
   allowSummaryFallback = true,
   awaitingContinuation = false,
@@ -177,6 +182,7 @@ export function TaskChatRunnerTurn({
   execution?: ExecutionProjection | null;
   /** Presentation only while Send/Retry admission has no run yet. */
   preparationLabel?: string;
+  dotAuthorityUnavailable?: boolean;
   startedAtMs: number | null;
   finishedAtMs?: number | null;
   activityUnavailable?: boolean;
@@ -200,6 +206,7 @@ export function TaskChatRunnerTurn({
 }) {
   const { failures: mcpStartupFailures, rest: turnItems } = partitionRunHealthItems(items);
   const terminal = isTerminalRunStatus(status);
+  const authorityUnavailable = !terminal && dotAuthorityUnavailable;
   const waitingLabel = runnerWaitingLabel({ runId, status, execution, preparationLabel, startedAtMs });
   const yielded = turnItems.some(
     (item) =>
@@ -248,7 +255,7 @@ export function TaskChatRunnerTurn({
   const currentActivityItems = currentActivityStatusItems(timelineItems);
   const timelineRows = groupImageResources(buildTurnTimelineRows(
     omitProgressRepeatedByResponse(timelineItems, final?.text),
-    !terminal,
+    !terminal && !authorityUnavailable,
   ));
 
   return (
@@ -259,9 +266,13 @@ export function TaskChatRunnerTurn({
     >
       {showHeader ? <TaskChatRunnerHeader runId={runId} agentName={agentName} agentIcon={agentIcon} agent={agent}
         status={status} execution={execution} preparationLabel={preparationLabel} startedAtMs={startedAtMs}
-        finishedAtMs={finishedAtMs} continuedAfterSteering={continuedAfterSteering} /> : null}
+        finishedAtMs={finishedAtMs} dotAuthorityUnavailable={authorityUnavailable} continuedAfterSteering={continuedAfterSteering} /> : null}
       <TaskChatRunHealthBanner failures={mcpStartupFailures} />
-      {activityUnavailable ? (
+      {authorityUnavailable ? (
+        <div className="px-1 py-1 text-xs text-muted-foreground" role="status">
+          This run cannot reply or finish through Paperclip. External stop is not confirmed.
+        </div>
+      ) : activityUnavailable ? (
         <div
           className="px-1 py-1 text-xs text-muted-foreground"
           role="status"
@@ -322,7 +333,7 @@ export function TaskChatRunnerTurn({
           />
         </div>
       ) : null}
-      {!final && currentActivityItems.length === 0 ? <RunnerCurrentActivityTail status={status} waitingLabel={waitingLabel} /> : null}
+      {!authorityUnavailable && !final && currentActivityItems.length === 0 ? <RunnerCurrentActivityTail status={status} waitingLabel={waitingLabel} /> : null}
     </div></TaskChatShimmerScope>
   );
 }

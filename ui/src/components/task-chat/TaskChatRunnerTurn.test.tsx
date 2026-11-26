@@ -44,6 +44,7 @@ describe("TaskChatRunnerTurn", () => {
     continuedAfterSteering = false,
     execution?: ExecutionProjection,
     preparationLabel?: string,
+    dotAuthorityUnavailable = false,
   ) =>
     act(() =>
       root.render(
@@ -57,6 +58,7 @@ describe("TaskChatRunnerTurn", () => {
               status={status}
               execution={execution}
               preparationLabel={preparationLabel}
+              dotAuthorityUnavailable={dotAuthorityUnavailable}
               startedAtMs={runId ? Date.now() - 2_000 : null}
               awaitingContinuation={awaitingContinuation}
               continuedAfterSteering={continuedAfterSteering}
@@ -87,6 +89,21 @@ describe("TaskChatRunnerTurn", () => {
       expect(container.textContent).not.toContain("Queued");
     },
   );
+
+  it("replaces the live clock and activity with a truthful Dot access notice", () => {
+    render([]);
+    expect(container.textContent).toContain("Thinking");
+    render([], "running", "run-1", undefined, false, false, undefined, undefined, true);
+    expect(container.querySelector('[data-testid="task-chat-turn-status-header"]')?.textContent)
+      .toBe("Paperclip access unavailable");
+    expect(container.textContent).toContain("External stop is not confirmed");
+    expect(container.textContent).not.toMatch(/Thinking|Working|Stopped/);
+    render([]);
+    expect(container.textContent).toContain("Thinking");
+    render([], "cancelled", "run-1", undefined, false, false, undefined, undefined, true);
+    expect(container.textContent).toContain("Stopped");
+    expect(container.textContent).not.toContain("External stop is not confirmed");
+  });
 
   it("preserves a specific preparation label before a run ID exists", () => {
     render([], "queued", null, undefined, false, false, undefined, "Preparing workspace");

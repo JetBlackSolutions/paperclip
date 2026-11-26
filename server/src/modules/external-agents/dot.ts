@@ -8,7 +8,7 @@ import { authorizeExternalBotBinding, authorizeExternalBotOperator, externalBotE
 import { updateAgentConfigurationInTransaction } from "../../services/agent-configuration-transaction.js";
 import type { heartbeatService } from "../../services/heartbeat.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { and, asc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { DOT_AGENT_TOOL_GUIDANCE, GROK_BOT_AGENT_TOOL_GUIDANCE, setAgentAvatarSchema, type SetAgentAvatarInput } from "@paperclipai/shared";
 import { setAgentProfileAvatar } from "../../services/agent-profile-avatar.js";
@@ -175,6 +175,21 @@ function createBroker(db: Db) {
           attentionRequired: !!authorityUnavailable || (active.status === "accepted"
             && active.lastActivityAt.getTime() < Date.now() - 15 * 60_000),
         } : null };
+    },
+    // Read-only chat state for the exact run, not the agent's latest assignment.
+    // Loss of access does not establish external stop or authorize replacement.
+    async chatRunAuthorityUnavailable(companyId: string, agentId: string, runId: string): Promise<boolean> {
+      const [row] = await db.select({ assignment: assignments, binding: bindings }).from(assignments)
+        .innerJoin(bindings, and(eq(bindings.id, assignments.bindingId),
+          eq(bindings.companyId, assignments.companyId), eq(bindings.agentId, assignments.agentId)))
+        .where(and(eq(assignments.companyId, companyId), eq(assignments.agentId, agentId),
+          eq(assignments.runId, runId), eq(bindings.providerKind, "openai_dot")))
+        .orderBy(desc(assignments.createdAt), desc(assignments.id)).limit(1);
+      if (!row || row.assignment.status === "settled") return false;
+      const { assignment, binding } = row;
+      return assignment.status === "fenced" || assignment.expiresAt <= new Date() ||
+        binding.revokedAt !== null || binding.status !== "ready" ||
+        binding.generation !== assignment.bindingGeneration || !await hasRunExecutionAuthority(db, assignment);
     },
     async reconcileTerminalAssignments(companyId: string, agentId: string, bindingId: string) {
       // A controller can fail before reconnecting to the Runner. Its terminal
